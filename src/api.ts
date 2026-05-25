@@ -29,6 +29,14 @@ export interface BootstrapResponse {
   history: SavedLook[]
   favorites: SavedLook[]
   tryOnSessions: TryOnSession[]
+  tryOnCapabilities: {
+    provider: 'mock' | 'webhook' | 'aliyun' | 'doubao'
+    supportsSingleGarment: boolean
+    supportsTopBottomOutfit: boolean
+    supportsOuterwearLayering: boolean
+    supportsShoesTryOn: boolean
+    supportsOutfitGeneration: boolean
+  }
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -180,9 +188,9 @@ export async function updateWardrobeItem(item: WardrobeItem) {
 
 export async function uploadWardrobeImage(
   dataUrl: string,
-  processingMode: 'standard' | 'subject' = 'subject',
+  processingMode: 'standard' | 'subject' = 'standard',
 ) {
-  return parseJson<{ imageUrl: string; processingMode: 'standard' | 'subject' }>(
+  return parseJson<{ imageUrl: string; sourceImageUrl: string; processingMode: 'standard' | 'subject' }>(
     await fetch(withBase('/api/uploads/image'), {
       method: 'POST',
       headers: {
@@ -196,15 +204,16 @@ export async function uploadWardrobeImage(
 
 export async function uploadAndAnalyzeGarment(
   dataUrl: string,
-  processingMode: 'standard' | 'subject' = 'subject',
+  processingMode: 'standard' | 'subject' = 'standard',
 ) {
   return parseJson<{
     imageUrl: string
+    sourceImageUrl: string
     processingMode: 'standard' | 'subject'
     subjectStats: {
       extracted: boolean
       componentCount: number
-      method?: 'ai_cutout' | 'local_cutout' | 'ai_studio_fallback' | 'fallback_original'
+      method?: 'cloud_cutout' | 'ai_cutout' | 'local_cutout' | 'ai_studio_fallback' | 'fallback_original'
     }
     draft: null | {
       provider: string
@@ -346,6 +355,77 @@ export async function generateTryOnPreview(sessionId: string) {
     await fetch(withBase(`/api/try-on/sessions/${sessionId}/generate`), {
       method: 'POST',
       headers: authHeaders(),
+    }),
+  )
+}
+
+export async function uploadAndAnalyzeGarmentsBatch(
+  items: Array<{ fileName: string; dataUrl: string }>,
+  processingMode: 'standard' | 'subject' = 'standard',
+) {
+  return parseJson<{
+    results: Array<{
+      index: number
+      fileName: string
+      imageUrl: string
+      sourceImageUrl: string
+      processingMode: 'standard' | 'subject'
+      subjectStats: {
+        extracted: boolean
+        componentCount: number
+        method?: 'cloud_cutout' | 'ai_cutout' | 'local_cutout' | 'ai_studio_fallback' | 'fallback_original'
+      }
+      draft: null | {
+        provider: string
+        category: WardrobeItem['category']
+        colorGroup: WardrobeItem['colorGroup']
+        thickness: WardrobeItem['thickness']
+        style: WardrobeItem['style']
+        seasonFit: WardrobeItem['seasonFit']
+        fitType: WardrobeItem['fitType']
+        garmentLength: WardrobeItem['garmentLength']
+        sleeveLength: WardrobeItem['sleeveLength']
+        silhouette: WardrobeItem['silhouette']
+        name: string
+        note: string
+        confidence: number
+      }
+      needsConfirmation: boolean
+    }>
+  }>(
+    await fetch(withBase('/api/uploads/garment-analyze-batch'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ items, processingMode }),
+    }),
+  )
+}
+
+export async function generateLookTryOnPreview(garmentItemIds: string[], force = false) {
+  return parseJson<TryOnSession>(
+    await fetch(withBase('/api/try-on/look-preview'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ garmentItemIds, force }),
+    }),
+  )
+}
+
+export async function generateOutfitPreview(garmentItemIds: string[], force = false, sceneHint = '') {
+  return parseJson<TryOnSession>(
+    await fetch(withBase('/api/outfit/generate'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ garmentItemIds, force, sceneHint }),
     }),
   )
 }

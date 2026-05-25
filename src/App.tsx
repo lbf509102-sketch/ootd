@@ -1,9 +1,16 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import './App.css'
+import { AddItemPanel } from './components/AddItemPanel'
+import { HomeRecommendationSection } from './components/HomeRecommendationSection'
+import { ProfileSettingsPanel } from './components/ProfileSettingsPanel'
+import { TryOnBuilderCard } from './components/TryOnBuilderCard'
+import { TryOnResultsSection } from './components/TryOnResultsSection'
+import { WardrobeDetailCard } from './components/WardrobeDetailCard'
+import { WardrobeEditorPanel } from './components/WardrobeEditorPanel'
+import { WardrobeFilterPanel } from './components/WardrobeFilterPanel'
 import {
   createWardrobeItem,
-  createTryOnSession,
   deleteFavoriteLook,
   deleteWardrobeItem,
   analyzeGarmentImage,
@@ -11,6 +18,8 @@ import {
   saveAvatarProfile,
   fetchSession,
   fetchWeather,
+  generateLookTryOnPreview,
+  generateOutfitPreview,
   generateTryOnPreview,
   logoutSession,
   recordLookWear,
@@ -21,28 +30,69 @@ import {
   setAuthToken,
   updateWardrobeItem,
   uploadAndAnalyzeGarment,
+  uploadAndAnalyzeGarmentsBatch,
   uploadWardrobeImage,
   verifyLoginCode,
+  type BootstrapResponse,
 } from './api'
-import { cityOptions, initialAvatarProfile, initialPreferences, initialWardrobe } from './data'
-import { generateRecommendations, replaceLookItem } from './engine'
+import {
+  buildDecisionPulseCopy,
+  buildEmptyReplacementCopy,
+  buildFeedbackCopy,
+  buildPrimaryDecisionCopy,
+  pickToneVariant,
+} from './copy'
+import {
+  categoryLabels,
+  colorLabels,
+  fixedCityList,
+  fixedCityWeatherOptions,
+  homeSceneTabs,
+  sceneLabels,
+  seasonLabels,
+  styleLabels,
+  tabLabels,
+  thicknessLabels,
+} from './app-constants'
+import { initialAvatarProfile, initialPreferences, initialWardrobe } from './data'
+import { type RecommendationTweak, generateRecommendations, replaceLookItems } from './engine'
+import {
+  type ImagePreset,
+  type AddIntakeMode,
+  buildForecastTip,
+  buildForecastWeather,
+  buildHomeSummaryHighlight,
+  buildLocalHistoryEntry,
+  buildSavedSectionDescription,
+  type ForecastDay,
+  forecastDayLabels,
+  formatSavedDate,
+  getLookItemMap,
+  getWeatherLabel,
+  inferVisualMeta,
+  intakeModeMeta,
+  type SavedSection,
+  type SavedStyleFilter,
+  suggestColorGroupFromRgb,
+  toSortableTime,
+  type TryOnSelectionSlot,
+  type TryOnSelectionState,
+  type WardrobeFiltersState,
+  type WardrobeQuickFilter,
+  wardrobeQuickFilterLabels,
+  type WardrobeSort,
+} from './app-utils'
 import type {
   AvatarProfile,
-  BodyShape,
   ClothingCategory,
   ColorGroup,
-  ComfortPriority,
   FitType,
   GarmentLength,
-  GenderPresentation,
-  HipType,
-  LegLengthType,
   RecommendationLook,
   ReplaceCategory,
   SavedLook,
   Scene,
   SeasonFit,
-  ShoulderType,
   Silhouette,
   StyleTag,
   SleeveLength,
@@ -51,7 +101,6 @@ import type {
   TryOnSession,
   UserPreferences,
   UserSession,
-  WaistType,
   WardrobeItem,
   WeatherProfile,
 } from './types'
@@ -60,203 +109,6 @@ const sessionStorageKey = 'smart-closet-session-token'
 const initialSessionToken =
   typeof window !== 'undefined' ? window.localStorage.getItem(sessionStorageKey) ?? '' : ''
 
-const tabLabels: Record<TabId, string> = {
-  home: '首页',
-  wardrobe: '衣橱',
-  add: '录入',
-  tryon: '试穿',
-  profile: '我的',
-}
-
-const sceneLabels: Record<Scene, string> = {
-  commute: '通勤',
-  daily: '日常',
-  date: '约会',
-  formal: '正式',
-}
-
-const styleLabels: Record<StyleTag, string> = {
-  commute: '通勤',
-  casual: '休闲',
-  refined: '精致',
-}
-
-const categoryLabels: Record<ClothingCategory, string> = {
-  top: '上衣',
-  bottom: '下装',
-  outerwear: '外套',
-  shoes: '鞋子',
-  dress: '连衣裙',
-  accessory: '配饰',
-}
-
-const colorLabels: Record<ColorGroup, string> = {
-  black_white_gray: '黑白灰',
-  blue: '蓝色',
-  khaki_brown: '卡其棕',
-  denim: '牛仔',
-  accent: '亮色',
-}
-
-const thicknessLabels: Record<Thickness, string> = {
-  light: '轻薄',
-  regular: '常规',
-  warm: '保暖',
-}
-
-const seasonLabels: Record<SeasonFit, string> = {
-  summer: '夏季',
-  spring_autumn: '春秋',
-  winter: '冬季',
-  all_season: '四季',
-}
-
-const fitTypeLabels: Record<FitType, string> = {
-  slim: '修身',
-  regular: '常规',
-  relaxed: '宽松',
-}
-
-const garmentLengthLabels: Record<GarmentLength, string> = {
-  short: '短款',
-  regular: '常规',
-  long: '长款',
-  midi: '中长',
-  maxi: '超长',
-}
-
-const sleeveLengthLabels: Record<SleeveLength, string> = {
-  sleeveless: '无袖',
-  short: '短袖',
-  three_quarter: '七分袖',
-  long: '长袖',
-  na: '不适用',
-}
-
-const silhouetteLabels: Record<Silhouette, string> = {
-  fitted: '贴身',
-  straight: '直筒',
-  relaxed: '宽松',
-  a_line: 'A 字',
-}
-
-const wardrobeSortLabels: Record<WardrobeSort, string> = {
-  smart: '默认优先',
-  recent: '最近穿过',
-  most_worn: '最常穿',
-  name: '按名称',
-}
-
-const wardrobeQuickFilterLabels: Record<WardrobeQuickFilter, string> = {
-  all: '全部',
-  recently_worn: '最近穿过',
-  recently_added: '最近新增',
-}
-
-const forecastDayLabels: Record<ForecastDay, string> = {
-  today: '今天',
-  tomorrow: '明天',
-  day_after: '后天',
-}
-
-const dayPartLabels: Record<DayPart, string> = {
-  morning: '早晨',
-  daytime: '白天',
-  evening: '晚上',
-}
-
-const intakeModeMeta: Record<
-  AddIntakeMode,
-  {
-    title: string
-    note: string
-  }
-> = {
-  camera: {
-    title: '拍一张',
-    note: '适合马上对着单品拍正面图，系统会自动提取主体。',
-  },
-  gallery: {
-    title: '从相册选',
-    note: '适合单张精修图，上传后会自动识别标签。',
-  },
-  batch: {
-    title: '批量导入',
-    note: '适合一次整理多件衣服，会逐张处理并显示进度。',
-  },
-}
-
-const comfortOptions: Record<ComfortPriority, string> = {
-  warmth_first: '保暖优先',
-  lightness_first: '轻便优先',
-  slimming_first: '显瘦优先',
-  versatile_first: '百搭优先',
-}
-
-const genderPresentationLabels: Record<GenderPresentation, string> = {
-  feminine: '偏女性化',
-  masculine: '偏男性化',
-  neutral: '中性',
-}
-
-const bodyShapeLabels: Record<BodyShape, string> = {
-  balanced: '匀称',
-  pear: '梨形',
-  apple: '苹果型',
-  rectangle: 'H 型',
-  inverted_triangle: '倒三角',
-  hourglass: '沙漏型',
-}
-
-const shoulderTypeLabels: Record<ShoulderType, string> = {
-  narrow: '偏窄',
-  regular: '常规',
-  broad: '偏宽',
-}
-
-const waistTypeLabels: Record<WaistType, string> = {
-  defined: '明显',
-  regular: '常规',
-  soft: '偏柔和',
-}
-
-const hipTypeLabels: Record<HipType, string> = {
-  narrow: '偏窄',
-  regular: '常规',
-  curvy: '偏丰满',
-}
-
-const legLengthLabels: Record<LegLengthType, string> = {
-  shorter: '偏短',
-  regular: '常规',
-  longer: '偏长',
-}
-
-const tryOnStatusFilterLabels: Record<TryOnStatusFilter, string> = {
-  all: '全部',
-  draft_ready: '待生成',
-  processing: '生成中',
-  completed: '已完成',
-  failed: '失败',
-}
-
-const imagePresetLabels = {
-  original: '原图',
-  card: '衣物卡片',
-  studio: '净色卡片',
-  square: '正方形',
-} as const
-
-type ImagePreset = keyof typeof imagePresetLabels
-type SavedSection = 'history' | 'favorite'
-type SavedStyleFilter = 'all' | StyleTag
-type TryOnStatusFilter = 'all' | TryOnSession['status']
-type WardrobeSort = 'smart' | 'recent' | 'most_worn' | 'name'
-type WardrobeQuickFilter = 'all' | 'recently_worn' | 'recently_added'
-type ForecastDay = 'today' | 'tomorrow' | 'day_after'
-type DayPart = 'morning' | 'daytime' | 'evening'
-type AddIntakeMode = 'camera' | 'gallery' | 'batch'
-
 type AddFormState = {
   name: string
   category: ClothingCategory
@@ -264,6 +116,7 @@ type AddFormState = {
   thickness: Thickness
   style: StyleTag
   imageUrl: string
+  sourceImageUrl: string
   seasonFit: SeasonFit
   fitType: FitType
   garmentLength: GarmentLength
@@ -316,17 +169,20 @@ type BatchExtractionItem = {
   fileName: string
   rawImageUrl: string
   imageUrl: string
+  sourceImageUrl: string
   draft: SmartDraft | null
   visionDraft: VisionDraftPayload | null
   extracted: boolean
   componentCount: number
-  method?: 'ai_cutout' | 'local_cutout' | 'ai_studio_fallback' | 'fallback_original'
+  method?: 'cloud_cutout' | 'ai_cutout' | 'local_cutout' | 'ai_studio_fallback' | 'fallback_original'
   needsConfirmation: boolean
   hint: string
   formValues: AddFormState
   status: 'done' | 'error'
   errorMessage?: string
 }
+
+type TryOnCapabilities = BootstrapResponse['tryOnCapabilities']
 
 type WardrobeEditState = {
   id: string
@@ -341,6 +197,7 @@ type WardrobeEditState = {
   sleeveLength: SleeveLength
   silhouette: Silhouette
   imageUrl: string
+  sourceImageUrl: string
 }
 
 const addFormDefaults: AddFormState = {
@@ -350,6 +207,7 @@ const addFormDefaults: AddFormState = {
   thickness: 'regular',
   style: 'commute',
   imageUrl: '',
+  sourceImageUrl: '',
   seasonFit: 'spring_autumn',
   fitType: 'regular',
   garmentLength: 'regular',
@@ -362,86 +220,21 @@ const loginFormDefaults: LoginFormState = {
   code: '',
 }
 
-function getWeatherLabel(weatherType: WeatherProfile['weatherType']) {
-  if (weatherType === 'rainy') return '有雨'
-  if (weatherType === 'sunny') return '晴朗'
-  if (weatherType === 'windy') return '风大'
-  return '多云'
+const emptyTryOnSelection: TryOnSelectionState = {
+  top: '',
+  bottom: '',
+  dress: '',
+  outerwear: '',
+  shoes: '',
 }
 
-function clampNumber(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value))
-}
-
-function buildForecastWeather(base: WeatherProfile, day: ForecastDay, dayPart: DayPart): WeatherProfile {
-  const dayOffset = day === 'today' ? 0 : day === 'tomorrow' ? 1 : 2
-  const partTempShift = dayPart === 'morning' ? -3 : dayPart === 'evening' ? -1 : 2
-  const partRainShift = dayPart === 'evening' ? 8 : dayPart === 'morning' ? 3 : 0
-  const dayTempShift = day === 'today' ? 0 : day === 'tomorrow' ? 1 : -1
-  const nextTemperature = base.temperature + dayTempShift + partTempShift
-  const nextFeelsLike = base.feelsLike + dayTempShift + partTempShift
-  const nextRainProbability = clampNumber(base.rainProbability + dayOffset * 6 + partRainShift, 0, 100)
-  const nextHumidity = clampNumber(base.humidity + (dayPart === 'morning' ? 6 : dayPart === 'daytime' ? -4 : 3), 20, 98)
-  const nextTempGap = clampNumber(base.tempGap + (day === 'tomorrow' ? 1 : 0), 2, 14)
-  const weatherType =
-    nextRainProbability >= 55 ? 'rainy' : nextFeelsLike >= 31 ? 'sunny' : nextTempGap >= 9 ? 'windy' : base.weatherType
-  const windLevel = nextTempGap >= 9 ? 'high' : nextTempGap >= 6 ? 'medium' : base.windLevel
-
-  return {
-    ...base,
-    temperature: nextTemperature,
-    feelsLike: nextFeelsLike,
-    rainProbability: nextRainProbability,
-    humidity: nextHumidity,
-    tempGap: nextTempGap,
-    weatherType,
-    windLevel,
-  }
-}
-
-function buildForecastTip(weather: WeatherProfile, day: ForecastDay, dayPart: DayPart) {
-  const dayLabel = forecastDayLabels[day]
-  const partLabel = dayPartLabels[dayPart]
-
-  if (weather.rainProbability >= 55) {
-    return `${dayLabel}${partLabel}降雨概率偏高，鞋子和下装尽量选更耐折腾的。`
-  }
-
-  if (weather.feelsLike >= 29) {
-    return `${dayLabel}${partLabel}偏热，优先轻薄透气，尽量减少不必要叠穿。`
-  }
-
-  if (weather.tempGap >= 8 || weather.windLevel === 'high') {
-    return `${dayLabel}${partLabel}温差和风感更明显，带一件外套会更从容。`
-  }
-
-  return `${dayLabel}${partLabel}体感比较稳定，可以优先挑一套省心好穿的组合。`
-}
-
-function formatSavedDate(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '刚刚保存'
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-}
-
-function toSortableTime(value?: string) {
-  if (!value) return 0
-  const time = new Date(value).getTime()
-  return Number.isNaN(time) ? 0 : time
-}
-
-function buildLocalHistoryEntry(look: RecommendationLook): SavedLook {
-  return {
-    id: `history-local-${crypto.randomUUID()}`,
-    kind: 'history',
-    look,
-    createdAt: new Date().toISOString(),
-  }
+const defaultTryOnCapabilities: TryOnCapabilities = {
+  provider: 'mock',
+  supportsSingleGarment: true,
+  supportsTopBottomOutfit: true,
+  supportsOuterwearLayering: false,
+  supportsShoesTryOn: false,
+  supportsOutfitGeneration: false,
 }
 
 async function readFileAsDataUrl(file: File) {
@@ -599,58 +392,6 @@ async function applyImagePreset(dataUrl: string, preset: ImagePreset) {
           ? '已整理成更干净的净色卡片，适合首页和衣橱展示'
           : '已裁成正方形，更适合列表封面',
   }
-}
-
-function getTryOnStatusLabel(status: TryOnSession['status']) {
-  if (status === 'completed') return '已完成'
-  if (status === 'processing') return '生成中'
-  if (status === 'failed') return '失败'
-  return '素材已就绪'
-}
-
-function getTryOnProviderLabel(provider?: TryOnSession['provider'] | null) {
-  if (provider === 'webhook') return '在线生成'
-  if (provider === 'mock') return '预览版'
-  return '待生成'
-}
-
-function suggestColorGroupFromRgb(red: number, green: number, blue: number): ColorGroup {
-  const max = Math.max(red, green, blue)
-  const min = Math.min(red, green, blue)
-  const diff = max - min
-
-  if (max < 90 || diff < 24) return 'black_white_gray'
-  if (blue > red + 12 && blue > green - 4) return blue > 150 ? 'blue' : 'denim'
-  if (red > 170 && green > 120) return 'khaki_brown'
-  if (red > 150 && diff > 45) return 'accent'
-  return 'khaki_brown'
-}
-
-function inferVisualMeta(category: ClothingCategory, fitType: FitType) {
-  const silhouette: Silhouette =
-    fitType === 'slim' ? 'fitted' : fitType === 'relaxed' ? 'relaxed' : category === 'dress' ? 'a_line' : 'straight'
-
-  if (category === 'top') {
-    return { garmentLength: 'regular' as GarmentLength, sleeveLength: 'short' as SleeveLength, silhouette }
-  }
-
-  if (category === 'outerwear') {
-    return { garmentLength: 'long' as GarmentLength, sleeveLength: 'long' as SleeveLength, silhouette }
-  }
-
-  if (category === 'dress') {
-    return {
-      garmentLength: 'midi' as GarmentLength,
-      sleeveLength: 'short' as SleeveLength,
-      silhouette: fitType === 'slim' ? ('fitted' as Silhouette) : ('a_line' as Silhouette),
-    }
-  }
-
-  if (category === 'bottom') {
-    return { garmentLength: 'regular' as GarmentLength, sleeveLength: 'na' as SleeveLength, silhouette }
-  }
-
-  return { garmentLength: 'short' as GarmentLength, sleeveLength: 'na' as SleeveLength, silhouette: 'straight' as Silhouette }
 }
 
 async function buildSmartDraft(
@@ -849,12 +590,18 @@ function normalizeVisionDraftPayload(draft: GarmentAnalyzeResult['draft']): Visi
   }
 }
 
-function buildAddFormFromUpload(imageUrl: string, smartDraft: SmartDraft | null, visionDraft: VisionDraftPayload | null): AddFormState {
+function buildAddFormFromUpload(
+  imageUrl: string,
+  sourceImageUrl: string,
+  smartDraft: SmartDraft | null,
+  visionDraft: VisionDraftPayload | null,
+): AddFormState {
   const applyDraft = Boolean(smartDraft && visionDraft && visionDraft.confidence >= 0.8)
 
   return {
     ...addFormDefaults,
     imageUrl,
+    sourceImageUrl,
     name: applyDraft && smartDraft ? smartDraft.name : '',
     category: applyDraft && smartDraft ? smartDraft.category : addFormDefaults.category,
     colorGroup: applyDraft && smartDraft ? smartDraft.colorGroup : addFormDefaults.colorGroup,
@@ -869,6 +616,12 @@ function buildAddFormFromUpload(imageUrl: string, smartDraft: SmartDraft | null,
 }
 
 function buildUploadHint(uploaded: GarmentAnalyzeResult) {
+  if (uploaded.processingMode === 'standard') {
+    return uploaded.needsConfirmation
+      ? '原图已经先保存好了，AI 也给了初步建议。现在可以直接继续录入；如果想做更干净的展示图，再打开主体提取重传即可。'
+      : '原图已经先保存好了，AI 也顺手预填了主要标签。赶时间时现在就能直接加入衣橱。'
+  }
+
   if (uploaded.subjectStats.method === 'ai_studio_fallback') {
     return 'AI 已经先把衣架和背景干扰尽量清掉了，但这张图还不适合强行透明抠图，所以先保留了 AI 整理后的白底单品图。'
   }
@@ -886,25 +639,16 @@ function buildUploadHint(uploaded: GarmentAnalyzeResult) {
     : '主体已提取，AI 已自动帮你预填主要标签。'
 }
 
-function getCutoutMethodLabel(method?: GarmentAnalyzeResult['subjectStats']['method']) {
-  if (method === 'ai_cutout') return 'AI 抠图'
-  if (method === 'ai_studio_fallback') return 'AI 灰底整理'
-  if (method === 'local_cutout') return '本地抠图'
-  if (method === 'fallback_original') return '保留原图'
-  return '未识别'
-}
-
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('home')
   const [scene, setScene] = useState<Scene>(initialPreferences.defaultScene)
-  const [selectedCity, setSelectedCity] = useState(cityOptions[0].city)
-  const [cityList, setCityList] = useState<Array<{ city: string }>>(cityOptions.map((entry) => ({ city: entry.city })))
+  const [selectedCity, setSelectedCity] = useState('嘉兴')
+  const [cityList, setCityList] = useState<Array<{ city: string }>>(fixedCityList.map((city) => ({ city })))
   const [wardrobe, setWardrobe] = useState<WardrobeItem[]>(initialWardrobe)
   const [preferences, setPreferences] = useState<UserPreferences>(initialPreferences)
   const [avatarProfile, setAvatarProfile] = useState<AvatarProfile>(initialAvatarProfile)
-  const [weather, setWeather] = useState<WeatherProfile>(cityOptions[0].fallbackWeather)
+  const [weather, setWeather] = useState<WeatherProfile>(fixedCityWeatherOptions.嘉兴)
   const [forecastDay, setForecastDay] = useState<ForecastDay>('today')
-  const [dayPart, setDayPart] = useState<DayPart>('daytime')
   const [weatherLoading, setWeatherLoading] = useState(Boolean(initialSessionToken))
   const [weatherError, setWeatherError] = useState('')
   const [bootstrapLoading, setBootstrapLoading] = useState(Boolean(initialSessionToken))
@@ -921,21 +665,24 @@ function App() {
   const [avatarPhotoUploading, setAvatarPhotoUploading] = useState(false)
   const [tryOnCreating, setTryOnCreating] = useState(false)
   const [tryOnPreviewingId, setTryOnPreviewingId] = useState('')
-  const [selectedTryOnItemId, setSelectedTryOnItemId] = useState('')
-  const [tryOnStatusFilter, setTryOnStatusFilter] = useState<TryOnStatusFilter>('all')
   const [previewingTryOnSession, setPreviewingTryOnSession] = useState<TryOnSession | null>(null)
   const [itemSaving, setItemSaving] = useState(false)
   const [imagePreparing, setImagePreparing] = useState(false)
   const [recommendationIndex, setRecommendationIndex] = useState(0)
   const [customLook, setCustomLook] = useState<RecommendationLook | null>(null)
+  const [recommendationTweak, setRecommendationTweak] = useState<RecommendationTweak>('balanced')
   const [replaceCategory, setReplaceCategory] = useState<ReplaceCategory | null>(null)
+  const [tryOnSelection, setTryOnSelection] = useState<TryOnSelectionState>(emptyTryOnSelection)
+  const [openTryOnSlot, setOpenTryOnSlot] = useState<TryOnSelectionSlot | null>(null)
+  const [tryOnSelectionTouched, setTryOnSelectionTouched] = useState(false)
+  const [tryOnCapabilities, setTryOnCapabilities] = useState<TryOnCapabilities>(defaultTryOnCapabilities)
   const [addForm, setAddForm] = useState<AddFormState>(addFormDefaults)
   const [rawImageUrl, setRawImageUrl] = useState('')
   const [imagePreset, setImagePreset] = useState<ImagePreset>('studio')
   const [editRawImageUrl, setEditRawImageUrl] = useState('')
   const [editImagePreparing, setEditImagePreparing] = useState(false)
   const [editImagePreset, setEditImagePreset] = useState<ImagePreset>('studio')
-  const [subjectCutEnabled, setSubjectCutEnabled] = useState(true)
+  const [subjectCutEnabled, setSubjectCutEnabled] = useState(false)
   const [smartDraftState, setSmartDraftState] = useState<SmartDraft | null>(null)
   const [editSmartDraftState, setEditSmartDraftState] = useState<SmartDraft | null>(null)
   const [smartDraftImageUrl, setSmartDraftImageUrl] = useState('')
@@ -947,16 +694,16 @@ function App() {
   const [batchExtractionCurrentName, setBatchExtractionCurrentName] = useState('')
   const [previewBackdrop, setPreviewBackdrop] = useState<'checker' | 'dark' | 'warm'>('checker')
   const [preferredAddIntake, setPreferredAddIntake] = useState<AddIntakeMode>('camera')
-  const [imageHint, setImageHint] = useState('拍一张正面照就够，系统会先帮你压缩，再帮你整理成更适合展示的衣物卡片。')
-  const [feedback, setFeedback] = useState('先看今日主推，再按客户反应切到备选方案就可以了。')
-  const [editImageHint, setEditImageHint] = useState('换图后也会继续自动整理成更干净的单品卡片。')
+  const [imageHint, setImageHint] = useState('拍一张正面照就够，系统会先帮你压缩并直接显示原图，标签识别会一起补上。')
+  const [, setFeedback] = useState('先看看今天主推这套，不喜欢的话再往下换。')
+  const [editImageHint, setEditImageHint] = useState('换图后会先直接显示原图，再继续补标签识别；需要更干净的展示图时再开主体提取。')
   const [savedSection, setSavedSection] = useState<SavedSection>('history')
   const [savedStyleFilter, setSavedStyleFilter] = useState<SavedStyleFilter>('all')
   const [wardrobeFocusId, setWardrobeFocusId] = useState<string | null>(null)
   const [wardrobeEdit, setWardrobeEdit] = useState<WardrobeEditState | null>(null)
   const [wardrobeSaving, setWardrobeSaving] = useState(false)
   const [wardrobeQuickFilter, setWardrobeQuickFilter] = useState<WardrobeQuickFilter>('all')
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<WardrobeFiltersState>({
     category: 'all',
     colorGroup: 'all',
     style: 'all',
@@ -964,27 +711,57 @@ function App() {
     sort: 'smart' as WardrobeSort,
   })
 
-  const forecastWeather = useMemo(
-    () => buildForecastWeather(weather, forecastDay, dayPart),
-    [dayPart, forecastDay, weather],
-  )
+  const forecastWeather = useMemo(() => buildForecastWeather(weather, forecastDay), [forecastDay, weather])
 
   const recommendations = useMemo(
-    () => generateRecommendations(wardrobe, preferences, forecastWeather, scene),
-    [forecastWeather, preferences, scene, wardrobe],
+    () => generateRecommendations(wardrobe, preferences, forecastWeather, scene, recommendationTweak),
+    [forecastWeather, preferences, recommendationTweak, scene, wardrobe],
   )
 
   const currentLook = customLook ?? recommendations[recommendationIndex] ?? recommendations[0] ?? null
 
+  const buildTryOnSelectionFromLook = (look: RecommendationLook | null): TryOnSelectionState => {
+    if (!look) return emptyTryOnSelection
+
+    return look.items.reduce<TryOnSelectionState>((draft, entry) => {
+      if (entry.item.category === 'top') draft.top = entry.item.id
+      if (entry.item.category === 'bottom') draft.bottom = entry.item.id
+      if (entry.item.category === 'dress') draft.dress = entry.item.id
+      if (entry.item.category === 'outerwear') draft.outerwear = entry.item.id
+      if (entry.item.category === 'shoes') draft.shoes = entry.item.id
+      return draft
+    }, { ...emptyTryOnSelection })
+  }
+
+  const buildTryOnLookKeyFromItemIds = (itemIds: string[]) => [...new Set(itemIds.filter(Boolean))].sort().join('__')
+
   const alternativeLooks = recommendations
     .filter((look, index) => (customLook ? look.id !== customLook.id : index !== recommendationIndex))
-    .slice(0, 2)
+    .slice(0, 3)
+
+  const replaceableCategories = useMemo(() => {
+    if (!currentLook || !replaceCategory) return []
+
+    const categoryOrder: ReplaceCategory[] = ['dress', 'top', 'bottom', 'shoes', 'outerwear', 'accessory']
+    return categoryOrder
+      .map((category) => ({
+        category,
+        options: replaceLookItems(currentLook, category, wardrobe, preferences, forecastWeather, scene, 3, recommendationTweak),
+      }))
+      .filter((entry) => entry.options.length > 0)
+  }, [currentLook, forecastWeather, preferences, recommendationTweak, replaceCategory, scene, wardrobe])
+
+  const activeReplaceCategory = useMemo(() => {
+    if (!replaceCategory) return null
+    if (replaceableCategories.some((entry) => entry.category === replaceCategory)) return replaceCategory
+    return replaceableCategories[0]?.category ?? null
+  }, [replaceCategory, replaceableCategories])
 
   const replacementOptions = useMemo(() => {
-    if (!currentLook || !replaceCategory) return []
-    const replaced = replaceLookItem(currentLook, replaceCategory, wardrobe, preferences, forecastWeather, scene)
-    return replaced ? [replaced] : []
-  }, [currentLook, replaceCategory, wardrobe, preferences, forecastWeather, scene])
+    if (!currentLook || !activeReplaceCategory) return []
+    return replaceableCategories.find((entry) => entry.category === activeReplaceCategory)?.options ?? []
+  }, [activeReplaceCategory, currentLook, replaceableCategories])
+  const forecastDayLabel = forecastDayLabels[forecastDay]
 
   const smartDraft = rawImageUrl && smartDraftImageUrl === rawImageUrl ? smartDraftState : null
   const editSmartDraft =
@@ -1002,6 +779,14 @@ function App() {
       smartDraft.source === 'ai' &&
       (smartDraft.confidence ?? 0) >= 0.8,
   )
+  const recentAddedThreshold = useMemo(() => {
+    const rankedTimes = wardrobe
+      .map((entry) => toSortableTime(entry.createdAt))
+      .filter((time) => time > 0)
+      .sort((left, right) => right - left)
+
+    return rankedTimes[Math.min(7, rankedTimes.length - 1)] ?? 0
+  }, [wardrobe])
 
   const filteredWardrobe = useMemo(
     () =>
@@ -1016,9 +801,12 @@ function App() {
           if (wardrobeQuickFilter === 'all') return true
           if (wardrobeQuickFilter === 'recently_worn') return toSortableTime(item.lastWornAt) > 0
           if (wardrobeQuickFilter === 'recently_added') {
+            const createdAt = toSortableTime(item.createdAt)
+            if (createdAt > 0) {
+              return createdAt >= recentAddedThreshold
+            }
             const originalIndex = wardrobe.findIndex((entry) => entry.id === item.id)
-            const threshold = Math.min(8, wardrobe.length || 8)
-            return originalIndex >= 0 && originalIndex < threshold
+            return originalIndex >= 0 && originalIndex < Math.min(8, wardrobe.length || 8)
           }
           return true
         })
@@ -1043,7 +831,7 @@ function App() {
 
           return left.name.localeCompare(right.name, 'zh-CN')
         }),
-    [filters, wardrobe, wardrobeQuickFilter],
+    [filters, recentAddedThreshold, wardrobe, wardrobeQuickFilter],
   )
   const hasActiveWardrobeFilters = filters.category !== 'all' || filters.colorGroup !== 'all' || filters.style !== 'all'
 
@@ -1093,6 +881,30 @@ function App() {
     }
   }, [avatarProfile.tryOnPhotoUrl, tryOnReadyItems])
 
+  const tryOnSelectableItems = useMemo(
+    () => wardrobe.filter((item) => Boolean(item.imageUrl) && item.category !== 'accessory'),
+    [wardrobe],
+  )
+  const wardrobeItemMap = useMemo(() => new Map(wardrobe.map((item) => [item.id, item])), [wardrobe])
+  const tryOnSelectableItemMap = useMemo(
+    () => new Map(tryOnSelectableItems.map((item) => [item.id, item])),
+    [tryOnSelectableItems],
+  )
+
+  const tryOnSlotOptions = useMemo(
+    () => ({
+      top: tryOnSelectableItems.filter((item) => item.category === 'top'),
+      bottom: tryOnSelectableItems.filter((item) => item.category === 'bottom'),
+      dress: tryOnSelectableItems.filter((item) => item.category === 'dress'),
+      outerwear: tryOnSelectableItems.filter((item) => item.category === 'outerwear'),
+      shoes: tryOnSelectableItems.filter((item) => item.category === 'shoes'),
+    }),
+    [tryOnSelectableItems],
+  )
+
+  const buildTryOnOptionLabel = (item: WardrobeItem) =>
+    `${item.name} · ${colorLabels[item.colorGroup]} / ${styleLabels[item.style]} / ${thicknessLabels[item.thickness]}`
+
   const filteredSavedLooks = useMemo(() => {
     const entries = savedSection === 'history' ? historyLooks : favoriteLooks
     if (savedStyleFilter === 'all') return entries
@@ -1100,22 +912,201 @@ function App() {
   }, [favoriteLooks, historyLooks, savedSection, savedStyleFilter])
 
   const editingWardrobeItem = useMemo(
-    () => wardrobe.find((item) => item.id === wardrobeEdit?.id) ?? null,
-    [wardrobe, wardrobeEdit?.id],
+    () => (wardrobeEdit?.id ? wardrobeItemMap.get(wardrobeEdit.id) ?? null : null),
+    [wardrobeEdit?.id, wardrobeItemMap],
   )
 
   const focusedWardrobeItem = useMemo(
-    () => wardrobe.find((item) => item.id === wardrobeFocusId) ?? null,
-    [wardrobe, wardrobeFocusId],
+    () => (wardrobeFocusId ? wardrobeItemMap.get(wardrobeFocusId) ?? null : null),
+    [wardrobeFocusId, wardrobeItemMap],
   )
-  const selectedTryOnItem = useMemo(
-    () => tryOnReadyItems.find((item) => item.id === selectedTryOnItemId) ?? null,
-    [selectedTryOnItemId, tryOnReadyItems],
+  const completedRealTryOnSessions = useMemo(
+    () =>
+      [...tryOnSessions]
+        .filter((entry) => entry.status === 'completed' && entry.resultImageUrl && entry.provider !== 'mock')
+        .sort((left, right) => toSortableTime(right.updatedAt) - toSortableTime(left.updatedAt)),
+    [tryOnSessions],
   )
-  const filteredTryOnSessions = useMemo(() => {
-    if (tryOnStatusFilter === 'all') return tryOnSessions
-    return tryOnSessions.filter((entry) => entry.status === tryOnStatusFilter)
-  }, [tryOnSessions, tryOnStatusFilter])
+
+  const getTryOnDisplayImageUrl = (entry: TryOnSession) => entry.baseResultImageUrl || entry.resultImageUrl || ''
+  const lookNeedsOutfitPreview = (look: RecommendationLook) =>
+    look.items.some((entry) => entry.item.category === 'outerwear' || entry.item.category === 'shoes')
+
+  const getLookPrimaryItem = (look: RecommendationLook) =>
+    (() => {
+      const lookItemMap = getLookItemMap(look)
+      return lookItemMap.dress ?? lookItemMap.top ?? null
+    })()
+
+  const buildLookTryOnKey = (look: RecommendationLook) =>
+    buildTryOnLookKeyFromItemIds(
+      look.items
+        .filter((entry) => entry.item.category !== 'shoes' && entry.item.category !== 'accessory')
+        .map((entry) => entry.item.id),
+    )
+
+  const buildOutfitGenerationKey = (look: RecommendationLook) =>
+    `outfit:${buildTryOnLookKeyFromItemIds(
+      look.items.filter((entry) => entry.item.category !== 'accessory').map((entry) => entry.item.id),
+    )}`
+
+  const getLookTryOnSession = (look: RecommendationLook) => {
+    const lookKey = buildLookTryOnKey(look)
+    const outfitKey = buildOutfitGenerationKey(look)
+    if (!lookKey && !outfitKey) return null
+
+    const needsOutfitPreview = lookNeedsOutfitPreview(look)
+
+    const outfitMatch = completedRealTryOnSessions.find((entry) => entry.lookKey === outfitKey)
+    const exactLookMatch = completedRealTryOnSessions.find((entry) => entry.lookKey === lookKey)
+
+    if (needsOutfitPreview) {
+      if (outfitMatch) return outfitMatch
+      if (exactLookMatch) return exactLookMatch
+    }
+
+    if (exactLookMatch) return exactLookMatch
+
+    if (outfitMatch) return outfitMatch
+
+    const primaryItem = getLookPrimaryItem(look)
+    if (primaryItem) {
+      const primaryMatch = completedRealTryOnSessions.find((entry) => entry.garmentItemId === primaryItem.id)
+      if (look.items.some((entry) => entry.item.category === 'dress') && primaryMatch) return primaryMatch
+    }
+
+    return null
+  }
+
+  const upsertTryOnSession = (session: TryOnSession) => {
+    setTryOnSessions((current) => {
+      const existingIndex = current.findIndex((entry) => entry.id === session.id)
+      if (existingIndex >= 0) {
+        return current.map((entry) => (entry.id === session.id ? session : entry))
+      }
+      return [session, ...current]
+    })
+  }
+
+  const handleTryOnSelectionChange = (slot: TryOnSelectionSlot, itemId: string) => {
+    setTryOnSelectionTouched(true)
+    setTryOnSelection((current) => {
+      const next = { ...current, [slot]: itemId }
+      if (slot === 'dress' && itemId) {
+        next.top = ''
+        next.bottom = ''
+      }
+      if ((slot === 'top' || slot === 'bottom') && itemId) {
+        next.dress = ''
+      }
+      return next
+    })
+    setOpenTryOnSlot(null)
+  }
+
+  const renderTryOnSlotField = (
+    slot: TryOnSelectionSlot,
+    title: string,
+    placeholder: string,
+    options: WardrobeItem[],
+    selectedId: string,
+    disabled = false,
+  ) => {
+    const selectedItem =
+      options.find((item) => item.id === selectedId) ?? (selectedId ? tryOnSelectableItemMap.get(selectedId) ?? null : null)
+    const isOpen = openTryOnSlot === slot
+    const previewItems = options.slice(0, 10)
+
+    return (
+      <label className={`try-on-slot-field${disabled ? ' disabled' : ''}`}>
+        <span>{title}</span>
+        <button
+          type="button"
+          className={`try-on-slot-trigger${isOpen ? ' active' : ''}`}
+          onClick={() => setOpenTryOnSlot((current) => (current === slot ? null : slot))}
+          disabled={disabled}
+        >
+          <div className="try-on-slot-trigger-copy">
+            <strong>{selectedItem ? selectedItem.name : placeholder}</strong>
+            <span>
+              {selectedItem
+                ? `${colorLabels[selectedItem.colorGroup]} / ${styleLabels[selectedItem.style]} / ${thicknessLabels[selectedItem.thickness]}`
+                : `${tryOnSlotOptions[slot].length} 件可选`}
+            </span>
+          </div>
+          <em>{isOpen ? '收起' : '展开'}</em>
+        </button>
+        {isOpen ? (
+          <div className="try-on-slot-panel">
+            <button type="button" className={`try-on-slot-option clear${!selectedId ? ' active' : ''}`} onClick={() => handleTryOnSelectionChange(slot, '')}>
+              <div className="try-on-slot-option-copy">
+                <strong>{placeholder}</strong>
+                <span>先把这个位置空出来</span>
+              </div>
+            </button>
+            {options.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`try-on-slot-option${selectedId === item.id ? ' active' : ''}`}
+                onClick={() => handleTryOnSelectionChange(slot, item.id)}
+              >
+                <div className="try-on-slot-option-thumb">{renderItemVisual(item)}</div>
+                <div className="try-on-slot-option-copy">
+                  <strong>{item.name}</strong>
+                  <span>{buildTryOnOptionLabel(item)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {selectedItem ? (
+          <button type="button" className="try-on-selected-inline" onClick={() => handleTryOnSelectionChange(slot, '')} disabled={disabled}>
+            <div className="try-on-selected-inline-thumb">{renderItemVisual(selectedItem)}</div>
+            <div className="try-on-selected-inline-copy">
+              <strong>{selectedItem.name}</strong>
+              <span>
+                {colorLabels[selectedItem.colorGroup]} / {styleLabels[selectedItem.style]} / {thicknessLabels[selectedItem.thickness]}
+              </span>
+            </div>
+            <em>点一下清空</em>
+          </button>
+        ) : isOpen && previewItems.length > 0 ? (
+          <div className="try-on-quick-picks">
+            {previewItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`try-on-quick-pick${selectedId === item.id ? ' active' : ''}`}
+                onClick={() => handleTryOnSelectionChange(slot, item.id)}
+                disabled={disabled}
+              >
+                <div className="try-on-quick-pick-thumb">{renderItemVisual(item)}</div>
+                <strong>{item.name}</strong>
+                <span>
+                  {colorLabels[item.colorGroup]} / {styleLabels[item.style]}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : isOpen ? (
+          <div className="empty-inline">这个位置暂时还没有可选的{title}。</div>
+        ) : null}
+      </label>
+    )
+  }
+
+  const handleFillTryOnFromCurrentLook = () => {
+    setTryOnSelectionTouched(true)
+    setTryOnSelection(buildTryOnSelectionFromLook(currentLook))
+    setFeedback(buildFeedbackCopy('fill_current_look', `fill-${currentLook?.id ?? 'none'}`))
+  }
+
+  const handleClearTryOnSelection = () => {
+    setTryOnSelectionTouched(true)
+    setTryOnSelection(emptyTryOnSelection)
+    setFeedback(buildFeedbackCopy('clear_tryon', `clear-${Date.now()}`))
+  }
 
   useEffect(() => {
     const token = initialSessionToken
@@ -1145,19 +1136,26 @@ function App() {
     fetchBootstrap()
       .then((data) => {
         if (ignore) return
-        const bootstrapCity = cityOptions.find((entry) => entry.city === data.selectedCity) ?? cityOptions[0]
+        const nextCity: (typeof fixedCityList)[number] = fixedCityList.includes(data.selectedCity as (typeof fixedCityList)[number])
+          ? (data.selectedCity as (typeof fixedCityList)[number])
+          : '嘉兴'
+        const bootstrapWeather = fixedCityWeatherOptions[nextCity]
         setWardrobe(data.wardrobe)
         setPreferences(data.preferences)
         setAvatarProfile(data.avatarProfile)
-        setWeather(bootstrapCity.fallbackWeather)
+        setWeather(bootstrapWeather)
         setWeatherError('')
         setWeatherLoading(true)
-        setSelectedCity(data.selectedCity)
+        setSelectedCity(nextCity)
         setScene(data.preferences.defaultScene)
-        setCityList(data.cities)
+        const availableCities = data.cities.filter((item) =>
+          fixedCityList.includes(item.city as (typeof fixedCityList)[number]),
+        )
+        setCityList(availableCities.length > 0 ? availableCities : fixedCityList.map((city) => ({ city })))
         setHistoryLooks(data.history)
         setFavoriteLooks(data.favorites)
         setTryOnSessions(data.tryOnSessions)
+        setTryOnCapabilities(data.tryOnCapabilities ?? defaultTryOnCapabilities)
         setApiMessage('')
       })
       .catch((error: Error) => {
@@ -1176,7 +1174,7 @@ function App() {
     if (!session) return
 
     let ignore = false
-    const city = cityOptions.find((entry) => entry.city === selectedCity) ?? cityOptions[0]
+    const city = fixedCityWeatherOptions[selectedCity as (typeof fixedCityList)[number]] ?? fixedCityWeatherOptions.嘉兴
 
     fetchWeather(city.city)
       .then((nextWeather) => {
@@ -1184,7 +1182,7 @@ function App() {
       })
       .catch(() => {
         if (!ignore) {
-          setWeather(city.fallbackWeather)
+          setWeather(city)
           setWeatherError('实时天气暂时没连上，先按当前城市继续推荐。')
         }
       })
@@ -1198,17 +1196,6 @@ function App() {
   }, [selectedCity, session])
 
   useEffect(() => {
-    if (!selectedTryOnItemId && tryOnReadyItems.length > 0) {
-      setSelectedTryOnItemId(tryOnReadyItems[0].id)
-      return
-    }
-
-    if (selectedTryOnItemId && !tryOnReadyItems.some((item) => item.id === selectedTryOnItemId)) {
-      setSelectedTryOnItemId(tryOnReadyItems[0]?.id ?? '')
-    }
-  }, [selectedTryOnItemId, tryOnReadyItems])
-
-  useEffect(() => {
     const resetTimer = window.setTimeout(() => {
       setRecommendationIndex(0)
       setCustomLook(null)
@@ -1218,7 +1205,7 @@ function App() {
     return () => {
       window.clearTimeout(resetTimer)
     }
-  }, [wardrobe, preferences, scene, selectedCity, forecastDay, dayPart, forecastWeather.feelsLike, forecastWeather.tempGap, forecastWeather.rainProbability])
+  }, [wardrobe, preferences, scene, selectedCity, forecastDay, forecastWeather.feelsLike, forecastWeather.tempGap, forecastWeather.rainProbability])
 
   useEffect(() => {
     if (!rawImageUrl) return
@@ -1313,12 +1300,15 @@ function App() {
   }
 
   const updateCity = (nextCity: string) => {
-    const city = cityOptions.find((entry) => entry.city === nextCity) ?? cityOptions[0]
-    setWeather(city.fallbackWeather)
+    const safeCity: (typeof fixedCityList)[number] = fixedCityList.includes(nextCity as (typeof fixedCityList)[number])
+      ? (nextCity as (typeof fixedCityList)[number])
+      : '嘉兴'
+    const city = fixedCityWeatherOptions[safeCity]
+    setWeather(city)
     setWeatherLoading(true)
     setWeatherError('')
-    setSelectedCity(nextCity)
-    saveSelectedCity(nextCity).catch(() => {
+    setSelectedCity(safeCity)
+    saveSelectedCity(safeCity).catch(() => {
       setApiMessage('城市已经切换成功。')
     })
   }
@@ -1335,7 +1325,7 @@ function App() {
     try {
       const saved = await saveAvatarProfile(avatarProfile)
       setAvatarProfile(saved)
-      setFeedback('身材档案已经保存好了，后续推荐会更贴近你。')
+      setFeedback(buildFeedbackCopy('avatar_saved', `avatar-${saved.heightCm}-${saved.weightKg}`))
       setApiMessage('')
     } catch {
       setApiMessage('保存慢了一点，请稍后再试一次。')
@@ -1366,7 +1356,7 @@ function App() {
       }
       const saved = await saveAvatarProfile(nextProfile)
       setAvatarProfile(saved)
-      setFeedback('参考照已经准备好了，后面看上身效果会更顺。')
+      setFeedback(buildFeedbackCopy('tryon_photo_saved', `tryon-photo-${saved.tryOnPhotoUrl ?? 'none'}`))
       setApiMessage('')
     } catch {
       setApiMessage('图片上传慢了一点，请再试一次。')
@@ -1376,32 +1366,12 @@ function App() {
     }
   }
 
-  const handleCreateTryOnSession = async () => {
-    if (!selectedTryOnItemId) {
-      setFeedback('先选一件想试穿的单品，再创建试穿任务。')
-      return
-    }
-
-    setTryOnCreating(true)
-    try {
-      const created = await createTryOnSession(selectedTryOnItemId)
-      setTryOnSessions((current) => [created, ...current])
-      setActiveTab('tryon')
-      setFeedback('试穿任务已经建好了，可以继续生成预览。')
-      setApiMessage('')
-    } catch (error) {
-      setApiMessage(error instanceof Error ? error.message : '试穿任务创建失败了。')
-    } finally {
-      setTryOnCreating(false)
-    }
-  }
-
   const handleCreateMockPreview = async (sessionId: string) => {
     setTryOnPreviewingId(sessionId)
     try {
       const updated = await generateTryOnPreview(sessionId)
-      setTryOnSessions((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)))
-      setFeedback('试穿预览已经生成好了，可以直接拿来演示。')
+      upsertTryOnSession(updated)
+      setFeedback(buildFeedbackCopy('mock_ready', `mock-${sessionId}`))
       setApiMessage('')
     } catch (error) {
       if (error instanceof Error) {
@@ -1410,6 +1380,76 @@ function App() {
         setApiMessage('试穿预览生成失败了，请稍后再试。')
       }
     } finally {
+      setTryOnPreviewingId('')
+    }
+  }
+
+  const handleGenerateCurrentLookTryOn = async (look: RecommendationLook) => {
+    const garmentItemIds = look.items
+      .filter((entry) => entry.item.category !== 'shoes' && entry.item.category !== 'accessory')
+      .map((entry) => entry.item.id)
+
+    if (garmentItemIds.length === 0) {
+      setFeedback('这套当前没有可生成上身效果的衣物。')
+      return
+    }
+
+    if (!avatarProfile.tryOnPhotoUrl) {
+      setApiMessage('请先去“我的”里上传参考照，再生成这套上身效果。')
+      return
+    }
+
+    const missingReadyItem = garmentItemIds.find((itemId) => !tryOnReadyItems.some((item) => item.id === itemId))
+    if (missingReadyItem) {
+      setApiMessage('这套里有单品还没准备好试穿信息，请先到衣橱确认单品资料。')
+      return
+    }
+
+    setTryOnCreating(true)
+    setTryOnPreviewingId(buildLookTryOnKey(look))
+    try {
+      const updated = await generateLookTryOnPreview(garmentItemIds, true)
+      upsertTryOnSession(updated)
+      setFeedback(buildFeedbackCopy('look_tryon_ready', `look-tryon-${garmentItemIds.join('-')}`))
+      setApiMessage('')
+    } catch (error) {
+      setApiMessage(error instanceof Error ? error.message : '这套上身效果生成失败了，请稍后再试。')
+    } finally {
+      setTryOnCreating(false)
+      setTryOnPreviewingId('')
+    }
+  }
+
+  const handleGenerateCurrentOutfitPreview = async (look: RecommendationLook) => {
+    const garmentItemIds = look.items.filter((entry) => entry.item.category !== 'accessory').map((entry) => entry.item.id)
+
+    if (garmentItemIds.length === 0) {
+      setFeedback('这套当前没有可生成整套效果图的衣物。')
+      return
+    }
+
+    if (!avatarProfile.tryOnPhotoUrl) {
+      setApiMessage('请先去“我的”里上传参考照，再生成整套效果图。')
+      return
+    }
+
+    const missingReadyItem = garmentItemIds.find((itemId) => !tryOnSelectableItems.some((item) => item.id === itemId))
+    if (missingReadyItem) {
+      setApiMessage('这套里有单品还没准备好，请先到衣橱确认图片。')
+      return
+    }
+
+    setTryOnCreating(true)
+    setTryOnPreviewingId(`outfit-${buildOutfitGenerationKey(look)}`)
+    try {
+      const updated = await generateOutfitPreview(garmentItemIds, true, `${sceneLabels[scene]} / ${styleLabels[look.style]}风`)
+      upsertTryOnSession(updated)
+      setFeedback(buildFeedbackCopy('outfit_ready', `outfit-${garmentItemIds.join('-')}-${scene}`))
+      setApiMessage('')
+    } catch (error) {
+      setApiMessage(error instanceof Error ? error.message : '整套效果图生成失败了，请稍后再试。')
+    } finally {
+      setTryOnCreating(false)
       setTryOnPreviewingId('')
     }
   }
@@ -1487,7 +1527,7 @@ function App() {
     setWardrobeFocusId(item.id)
     setEditRawImageUrl('')
     setEditImagePreset('studio')
-    setEditImageHint('换图后也会继续自动整理成更干净的单品卡片。')
+    setEditImageHint('换图会先直接显示原图，后面再继续补标签；想要更干净的展示图时再开主体提取。')
     setWardrobeEdit({
       id: item.id,
       name: item.name,
@@ -1501,6 +1541,7 @@ function App() {
       sleeveLength: item.sleeveLength ?? inferVisualMeta(item.category, item.fitType).sleeveLength,
       silhouette: item.silhouette ?? inferVisualMeta(item.category, item.fitType).silhouette,
       imageUrl: item.imageUrl ?? '',
+      sourceImageUrl: item.sourceImageUrl ?? item.imageUrl ?? '',
     })
   }
 
@@ -1513,13 +1554,17 @@ function App() {
 
     setWardrobeSaving(true)
     let storedImageUrl: string
+    let storedSourceImageUrl: string
     if (wardrobeEdit.imageUrl.startsWith('data:image/')) {
       const uploaded = await uploadWardrobeImage(wardrobeEdit.imageUrl, subjectCutEnabled ? 'subject' : 'standard')
       storedImageUrl = uploaded.imageUrl
+      storedSourceImageUrl = uploaded.sourceImageUrl
     } else if (wardrobeEdit.imageUrl) {
       storedImageUrl = wardrobeEdit.imageUrl
+      storedSourceImageUrl = wardrobeEdit.sourceImageUrl || editingWardrobeItem?.sourceImageUrl || wardrobeEdit.imageUrl
     } else {
       storedImageUrl = ''
+      storedSourceImageUrl = ''
     }
     const payload: WardrobeItem = {
       ...editingWardrobeItem,
@@ -1535,6 +1580,8 @@ function App() {
       sleeveLength: wardrobeEdit.sleeveLength,
       silhouette: wardrobeEdit.silhouette,
       imageUrl: storedImageUrl || null,
+      displayImageUrl: storedImageUrl || null,
+      sourceImageUrl: storedSourceImageUrl || null,
     }
 
     try {
@@ -1553,10 +1600,11 @@ function App() {
         sleeveLength: updated.sleeveLength ?? inferVisualMeta(updated.category, updated.fitType).sleeveLength,
         silhouette: updated.silhouette ?? inferVisualMeta(updated.category, updated.fitType).silhouette,
         imageUrl: updated.imageUrl ?? '',
+        sourceImageUrl: updated.sourceImageUrl ?? updated.imageUrl ?? '',
       })
       setEditRawImageUrl('')
       setEditImagePreset('studio')
-      setEditImageHint('换图后也会继续自动整理成更干净的单品卡片。')
+      setEditImageHint('换图会先直接显示原图，后面再继续补标签；想要更干净的展示图时再开主体提取。')
       setFeedback('这件衣服已经更新好了，后面的推荐会按新标签来。')
     } catch {
       setApiMessage('衣物修改失败了，请稍后再试。')
@@ -1623,13 +1671,38 @@ function App() {
     setCustomLook(null)
     setRecommendationIndex((current) => (current + 1) % recommendations.length)
     setReplaceCategory(null)
-    setFeedback('已经换成同天气、同场景下的另一套方案。')
+    setFeedback(buildFeedbackCopy('refresh_look', `refresh-${recommendationIndex}-${scene}-${forecastDay}`))
+  }
+
+  const handleSelectRecommendationTweak = (tweak: RecommendationTweak) => {
+    setRecommendationTweak(tweak)
+    setCustomLook(null)
+    setRecommendationIndex(0)
+    setReplaceCategory(null)
+  }
+
+  const handleToggleReplacePanel = () => {
+    if (replaceCategory) {
+      setReplaceCategory(null)
+      return
+    }
+
+    const nextCategory = replaceableCategories[0]?.category ?? null
+    if (!nextCategory) {
+      setFeedback('这一套暂时没有更合适的替换项了。')
+      return
+    }
+
+    setReplaceCategory(nextCategory)
+    window.requestAnimationFrame(() => {
+      document.getElementById('replace-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
   }
 
   const applyReplacement = (look: RecommendationLook) => {
     setCustomLook(look)
     setReplaceCategory(null)
-    setFeedback(look.reasons[look.reasons.length - 1] ?? '已经替换成更协调的单品。')
+    setFeedback(buildFeedbackCopy('replace_look', `replace-${look.id}`))
   }
 
   const handleImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1637,18 +1710,116 @@ function App() {
     if (!files.length) return
 
     setImagePreparing(true)
-    setImageHint(files.length > 1 ? `正在批量处理 ${files.length} 张图片…` : '正在上传图片，系统会一起完成主体提取和品类识别。')
+    setImageHint(
+      files.length > 1
+        ? `正在批量处理 ${files.length} 张图片…`
+        : subjectCutEnabled
+          ? '正在上传图片，系统会继续做主体提取和品类识别，这一档会慢一些。'
+          : '正在上传图片，先把原图显示出来，再继续补标签识别。',
+    )
     clearBatchExtraction()
     setBatchExtractionTotal(files.length)
 
     try {
       const nextItems: BatchExtractionItem[] = []
 
+      if (files.length > 1 && !subjectCutEnabled) {
+        try {
+          const batchChunkSize = 3
+          const optimizedItems = await Promise.all(
+            files.map(async (file) => ({
+              fileName: file.name,
+              optimized: await optimizeImageForMobile(file),
+            })),
+          )
+
+          for (let startIndex = 0; startIndex < optimizedItems.length; startIndex += batchChunkSize) {
+            const chunk = optimizedItems.slice(startIndex, startIndex + batchChunkSize)
+            setBatchExtractionCurrentName(
+              `正在识别第 ${startIndex + 1} 到 ${Math.min(startIndex + chunk.length, optimizedItems.length)} 张`,
+            )
+
+            const uploadedBatch = await uploadAndAnalyzeGarmentsBatch(
+              chunk.map((item) => ({
+                fileName: item.fileName,
+                dataUrl: item.optimized.dataUrl,
+              })),
+              'standard',
+            )
+
+            uploadedBatch.results
+              .sort((a, b) => a.index - b.index)
+              .forEach((uploadedResult, chunkIndex) => {
+                const optimized = chunk[chunkIndex]?.optimized
+                if (!optimized) return
+
+                const normalizedVisionDraft = normalizeVisionDraftPayload(uploadedResult.draft)
+                const nextDraft = normalizedVisionDraft ? mapVisionDraftToSmartDraft(normalizedVisionDraft) : null
+                nextItems.push({
+                  id: `batch-${crypto.randomUUID()}`,
+                  fileName: uploadedResult.fileName,
+                  rawImageUrl: optimized.dataUrl,
+                  imageUrl: uploadedResult.imageUrl,
+                  sourceImageUrl: uploadedResult.sourceImageUrl,
+                  draft: nextDraft,
+                  visionDraft: normalizedVisionDraft,
+                  extracted: uploadedResult.subjectStats.extracted,
+                  componentCount: uploadedResult.subjectStats.componentCount,
+                  method: uploadedResult.subjectStats.method,
+                  needsConfirmation: uploadedResult.needsConfirmation,
+                  hint: buildUploadHint(uploadedResult),
+                  formValues: buildAddFormFromUpload(
+                    uploadedResult.imageUrl,
+                    uploadedResult.sourceImageUrl,
+                    nextDraft,
+                    normalizedVisionDraft,
+                  ),
+                  status: 'done',
+                })
+              })
+
+            setBatchExtractionItems([...nextItems])
+            setBatchExtractionCompleted(nextItems.length)
+
+            if (!batchExtractionSelectedId && nextItems.length === chunk.length) {
+              applyBatchExtractionItem(nextItems[0])
+            }
+          }
+
+          const firstSuccess = nextItems[0] ?? null
+          if (firstSuccess) {
+            applyBatchExtractionItem(firstSuccess)
+            setImageHint('这批图片已经批量识别完成，结果保留在下面；点任意一张即可切回继续录入。')
+          } else {
+            setImageHint('这批图片都没处理成功，可以换一批再试。')
+          }
+
+          return
+        } catch (error) {
+          setApiMessage(error instanceof Error ? error.message : '批量识别这次没有成功，已自动切回逐张处理。')
+          setImageHint('批量识别这次没有成功，正在自动切回逐张处理。')
+          setBatchExtractionItems([])
+          setBatchExtractionCompleted(0)
+          setBatchExtractionCurrentName('')
+        }
+      }
+
       for (const [index, file] of files.entries()) {
         setBatchExtractionCurrentName(file.name)
 
         try {
           const optimized = await optimizeImageForMobile(file)
+          if (files.length === 1) {
+            setRawImageUrl(optimized.dataUrl)
+            setImagePreset('studio')
+            setSmartDraftState(null)
+            setSmartDraftImageUrl(optimized.dataUrl)
+            setAddForm((current) => ({
+              ...current,
+              imageUrl: optimized.dataUrl,
+              sourceImageUrl: optimized.dataUrl,
+            }))
+          }
           const uploaded = await uploadAndAnalyzeGarment(optimized.dataUrl, subjectCutEnabled ? 'subject' : 'standard')
           const normalizedVisionDraft = normalizeVisionDraftPayload(uploaded.draft)
           const nextDraft = normalizedVisionDraft ? mapVisionDraftToSmartDraft(normalizedVisionDraft) : null
@@ -1657,6 +1828,7 @@ function App() {
             fileName: file.name,
             rawImageUrl: optimized.dataUrl,
             imageUrl: uploaded.imageUrl,
+            sourceImageUrl: uploaded.sourceImageUrl,
             draft: nextDraft,
             visionDraft: normalizedVisionDraft,
             extracted: uploaded.subjectStats.extracted,
@@ -1664,7 +1836,12 @@ function App() {
             method: uploaded.subjectStats.method,
             needsConfirmation: uploaded.needsConfirmation,
             hint: buildUploadHint(uploaded),
-            formValues: buildAddFormFromUpload(uploaded.imageUrl, nextDraft, normalizedVisionDraft),
+            formValues: buildAddFormFromUpload(
+              uploaded.imageUrl,
+              uploaded.sourceImageUrl,
+              nextDraft,
+              normalizedVisionDraft,
+            ),
             status: 'done',
           }
 
@@ -1680,6 +1857,7 @@ function App() {
             fileName: file.name,
             rawImageUrl: '',
             imageUrl: '',
+            sourceImageUrl: '',
             draft: null,
             visionDraft: null,
             extracted: false,
@@ -1700,9 +1878,16 @@ function App() {
       const firstSuccess = nextItems.find((item) => item.status === 'done') ?? null
       if (firstSuccess) {
         applyBatchExtractionItem(firstSuccess)
+        if (files.length > 1) {
+          setImageHint('这批图片已经处理完成，结果保留在下面；点任意一张即可切回继续录入。')
+        }
       } else {
         setImageHint('这批图片都没处理成功，可以换一批再试。')
       }
+    } catch (error) {
+      setApiMessage(error instanceof Error ? error.message : '图片处理失败了，请稍后再试。')
+      setImageHint('这批图片处理失败了，可以换一批再试。')
+      setBatchExtractionCurrentName('')
     } finally {
       setImagePreparing(false)
       setBatchExtractionCurrentName('')
@@ -1730,12 +1915,25 @@ function App() {
     if (!file) return
 
     setEditImagePreparing(true)
-    setEditImageHint('正在上传新图片，系统会一起完成主体提取和品类识别。')
+    setEditImageHint(
+      subjectCutEnabled
+        ? '正在上传新图片，系统会继续做主体提取和品类识别，这一档会慢一些。'
+        : '正在上传新图片，先显示原图，再继续补标签识别。',
+    )
 
     try {
       const optimized = await optimizeImageForMobile(file)
       setEditRawImageUrl(optimized.dataUrl)
       setEditImagePreset('studio')
+      setWardrobeEdit((current) =>
+        current
+          ? {
+              ...current,
+              imageUrl: optimized.dataUrl,
+              sourceImageUrl: optimized.dataUrl,
+            }
+          : current,
+      )
       const uploaded = await uploadAndAnalyzeGarment(optimized.dataUrl, subjectCutEnabled ? 'subject' : 'standard')
       const normalizedVisionDraft = normalizeVisionDraftPayload(uploaded.draft)
       const nextDraft = normalizedVisionDraft ? mapVisionDraftToSmartDraft(normalizedVisionDraft) : null
@@ -1746,6 +1944,7 @@ function App() {
           ? {
               ...current,
               imageUrl: uploaded.imageUrl,
+              sourceImageUrl: uploaded.sourceImageUrl,
               name: nextDraft && normalizedVisionDraft && normalizedVisionDraft.confidence >= 0.8 ? (current.name.trim() ? current.name : nextDraft.name) : current.name,
               category: nextDraft && normalizedVisionDraft && normalizedVisionDraft.confidence >= 0.8 ? nextDraft.category : current.category,
               colorGroup: nextDraft && normalizedVisionDraft && normalizedVisionDraft.confidence >= 0.8 ? nextDraft.colorGroup : current.colorGroup,
@@ -1784,7 +1983,7 @@ function App() {
   }
 
   const handleClearAddImage = () => {
-    setAddForm((current) => ({ ...current, imageUrl: '' }))
+    setAddForm((current) => ({ ...current, imageUrl: '', sourceImageUrl: '' }))
     setRawImageUrl('')
     setImagePreset('studio')
     setSmartDraftState(null)
@@ -1794,7 +1993,7 @@ function App() {
   }
 
   const handleRemoveWardrobeEditImage = () => {
-    setWardrobeEdit((current) => (current ? { ...current, imageUrl: '' } : current))
+    setWardrobeEdit((current) => (current ? { ...current, imageUrl: '', sourceImageUrl: '' } : current))
     setEditRawImageUrl('')
     setEditImagePreset('studio')
     setEditSmartDraftState(null)
@@ -1839,7 +2038,7 @@ function App() {
           }
         : current,
     )
-    setFeedback('换图后的建议标签已经套用，这件衣服后面的推荐会更快变准。')
+      setFeedback(buildFeedbackCopy('edit_draft_applied', `edit-draft-${wardrobeEdit?.id ?? 'none'}`))
   }
 
   const handleAddItem = (event: FormEvent<HTMLFormElement>) => {
@@ -1853,11 +2052,14 @@ function App() {
 
     const persist = async () => {
       let storedImageUrl = ''
+      let storedSourceImageUrl = ''
       if (addForm.imageUrl.startsWith('data:image/')) {
         const uploaded = await uploadWardrobeImage(addForm.imageUrl, subjectCutEnabled ? 'subject' : 'standard')
         storedImageUrl = uploaded.imageUrl
+        storedSourceImageUrl = uploaded.sourceImageUrl
       } else if (addForm.imageUrl) {
         storedImageUrl = addForm.imageUrl
+        storedSourceImageUrl = addForm.sourceImageUrl || addForm.imageUrl
       }
 
       const newItem: WardrobeItem = {
@@ -1877,6 +2079,8 @@ function App() {
         wearCount: 0,
         isDisliked: false,
         imageUrl: storedImageUrl || undefined,
+        displayImageUrl: storedImageUrl || undefined,
+        sourceImageUrl: storedSourceImageUrl || storedImageUrl || undefined,
       }
 
       const savedItem = await createWardrobeItem(newItem)
@@ -1890,19 +2094,19 @@ function App() {
       if (nextBatchItem) {
         setBatchExtractionItems(remainingBatchItems)
         applyBatchExtractionItem(nextBatchItem)
-        setFeedback('这件衣物已经加入衣橱，已经自动切到下一张批量结果，继续确认后保存就行。')
+        setFeedback(buildFeedbackCopy('batch_next_saved', `batch-next-${nextBatchItem.id}`))
       } else {
         setAddForm(addFormDefaults)
         setRawImageUrl('')
         setImagePreset('studio')
-        setSubjectCutEnabled(true)
+        setSubjectCutEnabled(false)
         setSmartDraftState(null)
         setSmartDraftImageUrl('')
         setBatchExtractionSelectedId(null)
         clearBatchExtraction()
-        setImageHint('拍一张正面照就够，系统会先帮你压缩，再帮你整理成更适合展示的衣物卡片。')
+        setImageHint('拍一张正面照就够，系统会先帮你压缩并直接显示原图，标签识别会一起补上。')
         setActiveTab('home')
-        setFeedback('新衣物已加入衣橱，现在会参与今日推荐。')
+        setFeedback(buildFeedbackCopy('wardrobe_saved', `saved-${newItem.id}`))
       }
     }
 
@@ -1921,13 +2125,14 @@ function App() {
     </div>
   )
 
-  const renderLookStage = (look: RecommendationLook, compact = false) => {
-    const dress = look.items.find((entry) => entry.item.category === 'dress')?.item
-    const top = look.items.find((entry) => entry.item.category === 'top')?.item
-    const bottom = look.items.find((entry) => entry.item.category === 'bottom')?.item
-    const outerwear = look.items.find((entry) => entry.item.category === 'outerwear')?.item
-    const shoes = look.items.find((entry) => entry.item.category === 'shoes')?.item
-    const accessory = look.items.find((entry) => entry.item.category === 'accessory')?.item
+  const renderLookStage = (look: RecommendationLook, compact = false, tryOnImageUrl = '') => {
+    const lookItemMap = getLookItemMap(look)
+    const dress = lookItemMap.dress
+    const top = lookItemMap.top
+    const bottom = lookItemMap.bottom
+    const outerwear = lookItemMap.outerwear
+    const shoes = lookItemMap.shoes
+    const accessory = lookItemMap.accessory
 
     const inferAccessoryMount = (item: WardrobeItem | undefined) => {
       if (!item) return 'mount-neck'
@@ -2027,6 +2232,14 @@ function App() {
       </div>
     )
 
+    if (tryOnImageUrl) {
+      return (
+        <div className={`look-stage-result${compact ? ' compact' : ''}`}>
+          <img src={tryOnImageUrl} alt={`${styleLabels[look.style]}风试穿结果`} />
+        </div>
+      )
+    }
+
     return (
       <div
         className={`look-stage${compact ? ' compact' : ''}${dress ? ' has-dress' : ''}${outerwear ? ' has-outerwear' : ''}${
@@ -2057,18 +2270,36 @@ function App() {
   }
 
   const renderLookCard = (look: RecommendationLook, eyebrow: string, compact = false, interactive = false) => {
-    const hasOuterwear = look.items.some((entry) => entry.item.category === 'outerwear')
-    const hasAccessory = look.items.some((entry) => entry.item.category === 'accessory')
     const practicalItems = look.items.filter((entry) => entry.item.category !== 'accessory')
-    const recommendationPulse = look.scores.total >= 90 ? '直接穿很稳' : look.scores.total >= 82 ? '稍微确认下就能出门' : '建议看一眼替换项'
-    const primaryDecision =
-      look.scores.total >= 90 ? '这套现在就能出门。' : look.scores.total >= 82 ? '这套已经很接近最优，可以直接穿。' : '先看一眼换单件，通常还能再顺一点。'
-    const decisionPoints = [
-      `现在重点：${look.summary}`,
-      hasOuterwear ? '带一件外套会更稳妥' : '整套可以直接出门',
-      hasAccessory ? '配饰已经帮你补完整体感' : '这套以清爽稳定为主',
-    ]
-
+    const backupOuterwear = look.backupOuterwear ?? null
+    const visualSession = getLookTryOnSession(look)
+    const tryOnImageUrl = visualSession ? getTryOnDisplayImageUrl(visualSession) : ''
+    const needsOutfitPreview = lookNeedsOutfitPreview(look)
+    const lookTryOnKey = buildLookTryOnKey(look)
+    const lookOutfitKey = buildOutfitGenerationKey(look)
+    const canGenerateTryOn = Boolean(
+      interactive &&
+        lookTryOnKey &&
+        avatarProfile.tryOnPhotoUrl &&
+        !needsOutfitPreview &&
+        look.items
+          .filter((entry) => entry.item.category !== 'shoes' && entry.item.category !== 'accessory')
+          .every((entry) => tryOnReadyItems.some((item) => item.id === entry.item.id)),
+    )
+    const canGenerateLookOutfit = Boolean(
+      interactive &&
+        lookOutfitKey &&
+        tryOnCapabilities.supportsOutfitGeneration &&
+        avatarProfile.tryOnPhotoUrl &&
+        practicalItems.every((entry) => tryOnSelectableItems.some((item) => item.id === entry.item.id)),
+    )
+    const isGeneratingCurrentLook = Boolean(lookTryOnKey && tryOnCreating && tryOnPreviewingId === lookTryOnKey)
+    const isGeneratingCurrentOutfit = Boolean(lookOutfitKey && tryOnCreating && tryOnPreviewingId === `outfit-${lookOutfitKey}`)
+    const currentGenerationMessage =
+      isGeneratingCurrentOutfit || isGeneratingCurrentLook ? '正在生成效果图，通常需要几秒到 20 秒。' : ''
+    const copySeed = `${look.id}-${forecastWeather.feelsLike}-${scene}-${backupOuterwear ? backupOuterwear.id : 'none'}`
+    const recommendationPulse = buildDecisionPulseCopy(look.scores.total, copySeed)
+    const primaryDecision = buildPrimaryDecisionCopy(look.scores.total, `${copySeed}-decision`)
     return (
       <article className={`look-card${compact ? ' compact' : ''}`}>
         <div className="look-header">
@@ -2080,24 +2311,24 @@ function App() {
         </div>
 
         <div className={`look-showcase${compact ? ' compact' : ''}`}>
-          <div className="look-stage-wrap">
-            {renderLookStage(look, compact)}
-            <div className="look-stage-note">
-              <div className="look-stage-note-top">
-                <span className="chip">{sceneLabels[scene]}</span>
-                <span className="chip">体感 {forecastWeather.feelsLike}°C</span>
-                <span className="chip">{recommendationPulse}</span>
+          <div className={`look-stage-wrap${tryOnImageUrl ? ' has-real-result' : ''}`}>
+            {renderLookStage(look, compact, tryOnImageUrl)}
+              <div className="look-stage-note">
+                <div className="look-stage-note-top">
+                  <span className="chip">{sceneLabels[scene]}</span>
+                  <span className="chip">体感 {forecastWeather.feelsLike}°C</span>
+                  <span className="chip">
+                    {tryOnImageUrl ? '效果图' : recommendationPulse}
+                  </span>
+                </div>
               </div>
-              <strong>{look.summary}</strong>
-              <p>{look.reasons[0]}</p>
-            </div>
           </div>
           <div className="look-brief">
             {interactive ? (
               <div className="decision-bar">
                 <div className="decision-bar-copy">
                   <strong>{primaryDecision}</strong>
-                  <span>{replaceCategory ? '你现在正在看微调模式，点“微调单件”就能收起。' : '先看整套结论，如果客户想细调，再微调单件就行。'}</span>
+                  <span>{replaceCategory ? '现在是在微调模式，点一次“微调单件”就能收起来。' : '先看整套感觉，不满意再改单件会更快。'}</span>
                 </div>
                 <div className="decision-bar-actions">
                   <button className="primary" onClick={handleWearLook}>
@@ -2106,7 +2337,7 @@ function App() {
                   <button className="secondary" onClick={handleRefreshLook}>
                     再看一套
                   </button>
-                  <button className={`ghost${replaceCategory ? ' active-soft' : ''}`} onClick={() => setReplaceCategory(replaceCategory ? null : 'shoes')}>
+                  <button className={`ghost${replaceCategory ? ' active-soft' : ''}`} onClick={handleToggleReplacePanel}>
                     微调单件
                   </button>
                 </div>
@@ -2114,8 +2345,37 @@ function App() {
             ) : null}
 
             <div className="look-brief-copy">
-              <strong>今天主推就按这套来</strong>
-              <p>先给客户看整套效果，再快速确认每件单品，演示节奏会更顺。</p>
+              {interactive ? (
+                <div className="look-tryon-cta">
+                  <span>
+                    {canGenerateLookOutfit || canGenerateTryOn
+                      ? tryOnImageUrl
+                        ? '这套已经有结果了，不满意的话可以直接重新生成。'
+                        : '这套已经可以直接生成效果图了。'
+                      : '这套暂时还不能直接生成效果图。'}
+                  </span>
+                  {needsOutfitPreview ? (
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => handleGenerateCurrentOutfitPreview(look)}
+                      disabled={!canGenerateLookOutfit || isGeneratingCurrentOutfit}
+                    >
+                      {isGeneratingCurrentOutfit ? '生成中…' : tryOnImageUrl ? '重新生成效果图' : '生成效果图'}
+                    </button>
+                  ) : (
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => handleGenerateCurrentLookTryOn(look)}
+                      disabled={!canGenerateTryOn || isGeneratingCurrentLook}
+                    >
+                      {isGeneratingCurrentLook ? '生成中…' : tryOnImageUrl ? '重新生成效果图' : '生成效果图'}
+                    </button>
+                  )}
+                </div>
+              ) : null}
+              {currentGenerationMessage ? <div className="inline-progress-note">{currentGenerationMessage}</div> : null}
             </div>
 
             <div className="look-metrics">
@@ -2133,26 +2393,42 @@ function App() {
               </div>
             </div>
 
-            <div className="decision-strip">
-              {decisionPoints.map((point) => (
-                <div className="decision-pill" key={point}>
-                  {point}
+            {backupOuterwear ? (
+              <div className="backup-outerwear-card">
+                <div className="backup-outerwear-copy">
+                  <span className="item-badge">备用外套</span>
+                  <strong>早晚会凉时带上这件更稳</strong>
+                  <p>
+                    这件不算主穿搭，主要给你应对温差、风大或突然下雨的时候备用。
+                  </p>
                 </div>
-              ))}
-            </div>
+                <div className="item-card condensed backup-outerwear-item">
+                  <div className="item-card-top">
+                    {renderItemVisual(backupOuterwear)}
+                    <div className="item-copy">
+                      <strong>{backupOuterwear.name}</strong>
+                      <p>{categoryLabels[backupOuterwear.category]} / {styleLabels[backupOuterwear.style]}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <div className={`item-grid condensed${compact ? ' compact' : ''}`}>
               {look.items.map(({ item }) => (
                 <div className="item-card condensed" key={item.id}>
-                  <div className="item-card-top">
-                    {renderItemVisual(item)}
-                    <div className="item-copy">
-                      <strong>{item.name}</strong>
-                      <p>
-                        {categoryLabels[item.category]} / {styleLabels[item.style]}
-                      </p>
-                    </div>
+                <div className="item-card-top">
+                  {renderItemVisual(item)}
+                  <div className="item-copy">
+                    {tryOnImageUrl && item.category === 'shoes' ? <span className="item-badge">推荐鞋</span> : null}
+                    <strong>{item.name}</strong>
+                    <p>
+                      {item.category === 'shoes' && tryOnImageUrl
+                        ? '鞋子 / 作为搭配建议'
+                        : `${categoryLabels[item.category]} / ${styleLabels[item.style]}`}
+                    </p>
                   </div>
+                </div>
                 </div>
               ))}
             </div>
@@ -2167,17 +2443,11 @@ function App() {
                     去衣橱看单品
                   </button>
                 </div>
-                <p className="look-cta-tip">上面那排按钮负责快速决定，这里保留收藏和回看单品入口。</p>
               </div>
             ) : null}
           </div>
         </div>
 
-        <div className="reasons highlight-reasons">
-          {look.reasons.map((reason) => (
-            <p key={reason}>{reason}</p>
-          ))}
-        </div>
       </article>
     )
   }
@@ -2188,7 +2458,12 @@ function App() {
     if (!currentItem || !nextItem) return null
 
     return (
-      <div className="replace-preview-card">
+      <div className="replace-preview-card" onClick={() => applyReplacement(nextLook)} role="button" tabIndex={0} onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          applyReplacement(nextLook)
+        }
+      }}>
         <div className="replace-preview-flow">
           <div className="replace-preview-item">
             {renderItemVisual(currentItem)}
@@ -2220,11 +2495,7 @@ function App() {
       <div className="saved-panel-head">
         <div>
           <h3>{savedSection === 'history' ? '最近穿搭' : '收藏搭配'}</h3>
-          <p>
-            {savedSection === 'history'
-              ? '穿过并确认过的搭配会留在这里，方便你快速重穿。'
-              : '真正顺手的搭配先收藏，忙的时候可以直接调出来。'}
-          </p>
+          <p>{buildSavedSectionDescription(savedSection)}</p>
         </div>
         <div className="saved-summary">
           <strong>{filteredSavedLooks.length}</strong>
@@ -2264,7 +2535,11 @@ function App() {
               onClick={() => {
                 setCustomLook(entry.look)
                 setActiveTab('home')
-                setFeedback(savedSection === 'history' ? '这套已经替你调回首页，可以直接再穿。' : '收藏搭配已经调回首页，直接继续用就行。')
+                setFeedback(
+                  savedSection === 'history'
+                    ? buildFeedbackCopy('saved_restore_history', `saved-restore-${entry.id}`)
+                    : buildFeedbackCopy('saved_restore_favorite', `favorite-restore-${entry.id}`),
+                )
               }}
             >
               <div className="saved-look-topline">
@@ -2286,7 +2561,7 @@ function App() {
                 onClick={() => {
                   setCustomLook(entry.look)
                   setActiveTab('home')
-                  setFeedback('这套已经回到首页，可以直接作为今天的参考。')
+                  setFeedback(buildFeedbackCopy('saved_quick_open', `saved-quick-open-${entry.id}`))
                 }}
               >
                 再看这套
@@ -2296,11 +2571,133 @@ function App() {
         ))}
 
         {filteredSavedLooks.length === 0 ? (
-          <p>{savedSection === 'history' ? '当前筛选下还没有穿搭记录。' : '当前筛选下还没有收藏搭配。'}</p>
+          <p>
+            {savedSection === 'history'
+              ? pickToneVariant(`saved-empty-${savedStyleFilter}`, [
+                  '当前筛选下还没有穿搭记录。',
+                  '这个筛选下暂时还没有留下来的穿搭结果。',
+                  '这里现在还是空的，等你多穿几次后会慢慢丰富起来。',
+                ])
+              : pickToneVariant(`favorite-empty-${savedStyleFilter}`, [
+                  '当前筛选下还没有收藏搭配。',
+                  '这个筛选里还没有你专门留下来的搭配。',
+                  '这里暂时还空着，遇到真正顺手的搭配再收进来就行。',
+                ])}
+          </p>
         ) : null}
       </div>
     </article>
   )
+
+  const rawTryOnSelection = tryOnSelectionTouched ? tryOnSelection : buildTryOnSelectionFromLook(currentLook)
+  const effectiveTryOnSelection: TryOnSelectionState = {
+    ...rawTryOnSelection,
+    outerwear:
+      tryOnCapabilities.supportsOuterwearLayering || tryOnCapabilities.supportsOutfitGeneration
+        ? rawTryOnSelection.outerwear
+        : '',
+    shoes:
+      tryOnCapabilities.supportsShoesTryOn || tryOnCapabilities.supportsOutfitGeneration
+        ? rawTryOnSelection.shoes
+        : '',
+  }
+  const selectedTryOnTop = effectiveTryOnSelection.top ? tryOnSelectableItemMap.get(effectiveTryOnSelection.top) ?? null : null
+  const selectedTryOnBottom = effectiveTryOnSelection.bottom ? tryOnSelectableItemMap.get(effectiveTryOnSelection.bottom) ?? null : null
+  const selectedTryOnDress = effectiveTryOnSelection.dress ? tryOnSelectableItemMap.get(effectiveTryOnSelection.dress) ?? null : null
+  const selectedTryOnOuterwear = effectiveTryOnSelection.outerwear ? tryOnSelectableItemMap.get(effectiveTryOnSelection.outerwear) ?? null : null
+  const selectedTryOnShoes = effectiveTryOnSelection.shoes ? tryOnSelectableItemMap.get(effectiveTryOnSelection.shoes) ?? null : null
+  const hasManualTryOnBase = Boolean(selectedTryOnDress || (selectedTryOnTop && selectedTryOnBottom))
+  const tryOnGarmentItems = [
+    ...(selectedTryOnDress ? [selectedTryOnDress] : [selectedTryOnTop, selectedTryOnBottom].filter(Boolean)),
+    ...(selectedTryOnOuterwear ? [selectedTryOnOuterwear] : []),
+  ] as WardrobeItem[]
+  const tryOnPreviewItems = [...tryOnGarmentItems, ...(selectedTryOnShoes ? [selectedTryOnShoes] : [])]
+  const tryOnOuterwearBlocked = Boolean(selectedTryOnOuterwear) && !tryOnCapabilities.supportsOuterwearLayering
+  const tryOnShoesBlocked = Boolean(selectedTryOnShoes) && !tryOnCapabilities.supportsShoesTryOn
+  const needsOutfitGeneration = Boolean(selectedTryOnOuterwear || selectedTryOnShoes)
+  const tryOnPreviewLook: RecommendationLook | null = hasManualTryOnBase
+    ? {
+        id: `manual-${buildTryOnLookKeyFromItemIds(tryOnPreviewItems.map((item) => item.id)) || 'look'}`,
+        style: selectedTryOnDress?.style ?? selectedTryOnTop?.style ?? selectedTryOnOuterwear?.style ?? currentLook?.style ?? 'commute',
+        items: tryOnPreviewItems.map((item) => ({ item, role: item.category })),
+        scores: {
+          total: 0,
+          weather: 0,
+          style: 0,
+          color: 0,
+          scene: 0,
+          fit: 0,
+          preference: 0,
+        },
+        reasons: [],
+        summary: selectedTryOnDress ? '这套以连衣裙为主，适合直接看整体上身效果。' : '这套已经按上衣和下装搭好了，可以直接看整套效果。',
+      }
+    : null
+  const tryOnPreviewSession = tryOnPreviewLook ? getLookTryOnSession(tryOnPreviewLook) : null
+  const tryOnPreviewImageUrl = tryOnPreviewSession ? getTryOnDisplayImageUrl(tryOnPreviewSession) : ''
+  const tryOnPreviewIsOutfitGeneration = Boolean(tryOnPreviewSession?.lookKey?.startsWith('outfit:'))
+  const tryOnPreviewLookKey = tryOnPreviewLook ? buildLookTryOnKey(tryOnPreviewLook) : ''
+  const tryOnPreviewOutfitKey = tryOnPreviewLook ? buildOutfitGenerationKey(tryOnPreviewLook) : ''
+  const isGeneratingTryOnPreview = Boolean(tryOnCreating && tryOnPreviewLookKey && tryOnPreviewingId === tryOnPreviewLookKey)
+  const isGeneratingOutfitPreview = Boolean(
+    tryOnCreating && tryOnPreviewOutfitKey && tryOnPreviewingId === `outfit-${tryOnPreviewOutfitKey}`,
+  )
+  const tryOnGenerationMode: 'tryon' | 'outfit' = needsOutfitGeneration ? 'outfit' : 'tryon'
+  const currentTryOnGenerationMessage =
+    isGeneratingOutfitPreview || isGeneratingTryOnPreview ? '正在生成效果图，通常需要几秒到 20 秒。' : ''
+  const canGenerateSelectedTryOn = Boolean(
+    avatarProfile.tryOnPhotoUrl &&
+      hasManualTryOnBase &&
+      !tryOnOuterwearBlocked &&
+      !tryOnShoesBlocked &&
+      tryOnGarmentItems.every((item) => tryOnReadyItems.some((readyItem) => readyItem.id === item.id)),
+  )
+  const canGenerateOutfitPreview = Boolean(
+    tryOnCapabilities.supportsOutfitGeneration &&
+    avatarProfile.tryOnPhotoUrl &&
+      hasManualTryOnBase &&
+      tryOnPreviewItems.every((item) => tryOnSelectableItems.some((selectableItem) => selectableItem.id === item.id)),
+  )
+  const canRunPrimaryTryOnAction = tryOnGenerationMode === 'outfit' ? canGenerateOutfitPreview : canGenerateSelectedTryOn
+  const primaryTryOnActionLabel =
+    isGeneratingOutfitPreview || isGeneratingTryOnPreview
+      ? '生成中…'
+      : tryOnPreviewImageUrl
+        ? '重新生成效果图'
+        : '生成效果图'
+  const selectedTryOnBlockingMessage = !avatarProfile.tryOnPhotoUrl
+    ? '先去“我的”里上传本人参考照。'
+    : !hasManualTryOnBase
+      ? '先选好一套基础搭配，至少要有连衣裙，或者上衣加下装。'
+      : needsOutfitGeneration && !tryOnCapabilities.supportsOutfitGeneration
+        ? '这套暂时还不能直接生成效果图，先把外套或鞋子去掉试试。'
+      : tryOnOuterwearBlocked
+        ? '这套暂时还不能直接生成效果图，先把外套去掉试试。'
+      : tryOnShoesBlocked
+        ? '这套暂时还不能直接生成效果图，先把鞋子去掉试试。'
+        : canRunPrimaryTryOnAction
+        ? tryOnPreviewImageUrl
+          ? '这套已经有结果了，不满意的话可以直接重新生成。'
+          : '这套已经可以直接生成效果图了。'
+        : '这套里还有衣物资料没补全，先去衣橱把图片和标签整理好。'
+  const recentTryOnSessions = tryOnSessions.slice(0, 6)
+  const handleSelectAlternativeLook = (lookId: string) => {
+    setCustomLook(null)
+    const nextIndex = recommendations.findIndex((entry) => entry.id === lookId)
+    if (nextIndex >= 0) setRecommendationIndex(nextIndex)
+  }
+  const handlePrimaryTryOnAction = () => {
+    if (!tryOnPreviewLook) return
+    if (tryOnGenerationMode === 'outfit') {
+      void handleGenerateCurrentOutfitPreview(tryOnPreviewLook)
+      return
+    }
+    void handleGenerateCurrentLookTryOn(tryOnPreviewLook)
+  }
+  const handleAddQuickEditHint = () => {
+    document.getElementById('add-item-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setFeedback(buildFeedbackCopy('quick_edit_hint', `quick-edit-${addForm.imageUrl || 'none'}`))
+  }
 
   if (authChecking) {
     return (
@@ -2319,8 +2716,8 @@ function App() {
       <div className="shell auth-shell">
         <form className="auth-card" onSubmit={handleVerifyCode}>
           <p className="brand">智能衣橱</p>
-          <h1>先登录，再把你的穿搭数据留住</h1>
-          <p className="auth-copy">现在是手机优先版本，登录后你的衣橱、偏好和穿着记录都会按手机号分开保存。</p>
+          <h1>先登录，后面这些搭配和衣橱才留得住</h1>
+          <p className="auth-copy">现在是手机优先版本，登录后你的衣橱、偏好和穿着记录都会跟着手机号走，换个时间再回来也接得上。</p>
 
           <label>
             <span>手机号</span>
@@ -2350,7 +2747,7 @@ function App() {
           </div>
 
           <div className="auth-helper">
-            <strong>登录提示</strong>
+            <strong>当前提示</strong>
             <p>{loginMessage}</p>
           </div>
 
@@ -2364,33 +2761,14 @@ function App() {
 
   return (
     <div className="shell">
-      <header className="topbar">
-        <div>
-          <p className="brand">智能衣橱</p>
-          <h1>看天气，懂你衣橱，今天直接穿这套</h1>
-        </div>
-        <div className="topbar-actions">
-          <label className="select-field">
-            <span>所在城市</span>
-            <select value={selectedCity} onChange={(event) => updateCity(event.target.value)}>
-              {cityList.map((item) => (
-                <option key={item.city} value={item.city}>
-                  {item.city}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </header>
-
       {apiMessage ? <div className="api-banner">{apiMessage}</div> : null}
 
       <main className="content">
         {bootstrapLoading ? (
           <section className="page">
             <div className="empty-block">
-              <h2>正在准备你的今日推荐</h2>
-              <p>衣橱、收藏和历史记录马上就好。</p>
+              <h2>正在把今天这套思路理出来</h2>
+              <p>衣橱、收藏和历史记录正在接回，很快就能看到今天的主推荐。</p>
             </div>
 
             <div className="wardrobe-summary-row" hidden>
@@ -2416,21 +2794,24 @@ function App() {
 
         {!bootstrapLoading && activeTab === 'home' ? (
           <section className="page">
-            <div className="weather-panel">
+            <section className="weather-panel weather-panel-compact">
               <div className="weather-top">
                 <div>
-                  <p className="eyebrow">{forecastDayLabels[forecastDay]} {dayPartLabels[dayPart]}</p>
-                  <h2>
-                    {forecastWeather.city}
-                    <span>{getWeatherLabel(forecastWeather.weatherType)}</span>
-                  </h2>
+                  <p className="brand">智能衣橱</p>
+                  <h2>今天穿什么，先看这里</h2>
                 </div>
-                <div className="weather-live">
-                  <span className={weatherLoading ? 'status loading' : 'status'}>
-                    {weatherLoading ? '天气更新中…' : `${forecastWeather.temperature}°C`}
-                  </span>
-                </div>
+                <label className="select-field">
+                  <span>所在城市</span>
+                  <select value={selectedCity} onChange={(event) => updateCity(event.target.value)}>
+                    {cityList.map((item) => (
+                      <option key={item.city} value={item.city}>
+                        {item.city}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
+
               <div className="forecast-toolbar">
                 <div className="forecast-switch" aria-label="推荐日期">
                   {Object.entries(forecastDayLabels).map(([value, label]) => (
@@ -2443,12 +2824,22 @@ function App() {
                     </button>
                   ))}
                 </div>
-                <div className="forecast-switch" aria-label="推荐时段">
-                  {Object.entries(dayPartLabels).map(([value, label]) => (
-                    <button key={value} className={dayPart === value ? 'active' : ''} onClick={() => setDayPart(value as DayPart)}>
-                      {label}
-                    </button>
-                  ))}
+              </div>
+            </section>
+
+            <div className="weather-panel">
+              <div className="weather-top">
+                <div>
+                  <p className="eyebrow">{forecastDayLabels[forecastDay]}</p>
+                  <h2>
+                    {forecastWeather.city}
+                    <span>{getWeatherLabel(forecastWeather.weatherType)}</span>
+                  </h2>
+                </div>
+                <div className="weather-live">
+                  <span className={weatherLoading ? 'status loading' : 'status'}>
+                    {weatherLoading ? '天气更新中…' : `${forecastWeather.temperature}°C`}
+                  </span>
                 </div>
               </div>
               <div className="weather-stats">
@@ -2457,121 +2848,40 @@ function App() {
                 <span>降雨 {forecastWeather.rainProbability}%</span>
                 <span>湿度 {forecastWeather.humidity}%</span>
               </div>
-              <p className="weather-tip">{buildForecastTip(forecastWeather, forecastDay, dayPart)}</p>
+              <p className="weather-tip">{buildForecastTip(forecastWeather, forecastDay)}</p>
               {weatherError ? <p className="weather-error">{weatherError}</p> : null}
             </div>
 
             <section className="scene-strip" aria-label="快捷切换场景">
-              {Object.entries(sceneLabels).map(([value, label]) => (
-                <button key={value} className={scene === value ? 'active' : ''} onClick={() => setScene(value as Scene)}>
+              {homeSceneTabs.map(({ value, label }) => (
+                <button key={value} className={scene === value ? 'active' : ''} onClick={() => setScene(value)}>
                   {label}
                 </button>
               ))}
             </section>
 
-            {currentLook ? (
-              <>
-                <section className="home-summary-card">
-                  <div className="section-head">
-                    <div>
-                      <p className="eyebrow">今日主推</p>
-                      <h2>{styleLabels[currentLook.style]}风整套推荐</h2>
-                    </div>
-                    <div className="score-pill">{currentLook.scores.total} 分</div>
-                  </div>
-
-                  <div className="home-summary-grid">
-                    <div className="home-summary-block">
-                      <strong>主推结论</strong>
-                      <p>{currentLook.summary}</p>
-                    </div>
-                    <div className="home-summary-block">
-                      <strong>推荐场景</strong>
-                      <p>{sceneLabels[scene]} / {forecastDayLabels[forecastDay]} {dayPartLabels[dayPart]}</p>
-                    </div>
-                    <div className="home-summary-block">
-                      <strong>推荐重点</strong>
-                      <p>{currentLook.reasons[0] ?? '这套是当前天气和偏好下最稳妥的主推方案。'}</p>
-                    </div>
-                  </div>
-                </section>
-
-                {renderLookCard(currentLook, `${forecastDayLabels[forecastDay]}${dayPartLabels[dayPart]}推荐`, false, true)}
-
-                {replaceCategory ? (
-                  <section className="replace-panel">
-                    <div className="replace-header">
-                      <h3>微调这一套</h3>
-                      <p>不重算整套，只换掉客户最想调整的那一个位置。</p>
-                      <div className="replace-types">
-                        {(['top', 'bottom', 'shoes', 'outerwear', 'accessory'] as ReplaceCategory[]).map((type) => (
-                          <button
-                            key={type}
-                            className={replaceCategory === type ? 'active' : ''}
-                            onClick={() => setReplaceCategory(type)}
-                          >
-                            {categoryLabels[type]}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {replacementOptions.length > 0 ? (
-                      <div className="replacement-option">
-                        {renderReplacePreview(currentLook, replacementOptions[0], replaceCategory)}
-                        <div className="replacement-look-compact">{renderLookCard(replacementOptions[0], '替换后效果', true)}</div>
-                      </div>
-                    ) : (
-                      <p className="weather-tip">当前这个品类没有更稳妥的替换项了。</p>
-                    )}
-                  </section>
-                ) : null}
-
-                {alternativeLooks.length > 0 ? (
-                  <section className="decision-queue">
-                    <div className="section-head compact-head">
-                      <h3>备选方案</h3>
-                      <p>如果客户想看第二种方向，直接从下面切过去就行。</p>
-                    </div>
-                    <div className="decision-queue-grid">
-                      {alternativeLooks.map((look) => (
-                        <button
-                          key={look.id}
-                          className="decision-queue-card"
-                          onClick={() => {
-                            setCustomLook(null)
-                            const nextIndex = recommendations.findIndex((entry) => entry.id === look.id)
-                            if (nextIndex >= 0) setRecommendationIndex(nextIndex)
-                            setReplaceCategory(null)
-                          }}
-                        >
-                          <div className="decision-queue-top">
-                            <strong>{styleLabels[look.style]}风</strong>
-                            <span>{look.scores.total} 分</span>
-                          </div>
-                          <div className="decision-queue-items">
-                            {look.items.slice(0, 3).map(({ item }) => (
-                              <div key={item.id} className="decision-queue-thumb">
-                                {renderItemVisual(item)}
-                              </div>
-                            ))}
-                          </div>
-                          <p>{look.summary}</p>
-                          <small>{look.reasons[0]}</small>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ) : null}
-              </>
-            ) : (
-              <div className="empty-block">
-                <h2>当前还没有可推荐的整套穿搭</h2>
-                <p>先去录入几件常穿的上衣、下装和鞋子，系统就能开始给你推荐。</p>
-              </div>
-            )}
-
-            <div className="feedback-bar">{feedback}</div>
+            <HomeRecommendationSection
+              alternativeLooks={alternativeLooks}
+              activeReplaceCategory={activeReplaceCategory}
+              currentLook={currentLook}
+              forecastDayLabel={forecastDayLabel}
+              forecastWeather={forecastWeather}
+              onSelectTweak={handleSelectRecommendationTweak}
+              onSelectReplaceCategory={setReplaceCategory}
+              recommendationTweak={recommendationTweak}
+              renderItemVisual={renderItemVisual}
+              renderLookCard={renderLookCard}
+              renderReplacePreview={renderReplacePreview}
+              replacementOptions={replacementOptions}
+              replaceCategory={replaceCategory}
+              replaceableCategories={replaceableCategories}
+              scene={scene}
+              buildHomeSummaryHighlight={buildHomeSummaryHighlight}
+              buildEmptyReplacementCopy={buildEmptyReplacementCopy}
+              pickToneVariant={pickToneVariant}
+              setRecommendationIndexByLookId={handleSelectAlternativeLook}
+              setReplaceCategory={setReplaceCategory}
+            />
           </section>
         ) : null}
 
@@ -2582,104 +2892,11 @@ function App() {
               <p>把常穿单品整理顺手，后面每天出门前就能更快拿到稳妥推荐。</p>
             </div>
 
-            <div className="filter-panel">
-              <div className="filter-group">
-                <span>按品类看</span>
-                <div className="chip-filter-row">
-                  <button
-                    className={filters.category === 'all' ? 'active' : ''}
-                    onClick={() => setFilters((current) => ({ ...current, category: 'all' }))}
-                  >
-                    全部
-                  </button>
-                  {Object.entries(categoryLabels).map(([value, label]) => (
-                    <button
-                      key={value}
-                      className={filters.category === value ? 'active' : ''}
-                      onClick={() => setFilters((current) => ({ ...current, category: value }))}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="filter-group">
-                <span>按风格看</span>
-                <div className="chip-filter-row">
-                  <button
-                    className={filters.style === 'all' ? 'active' : ''}
-                    onClick={() => setFilters((current) => ({ ...current, style: 'all' }))}
-                  >
-                    全部
-                  </button>
-                  {Object.entries(styleLabels).map(([value, label]) => (
-                    <button
-                      key={value}
-                      className={filters.style === value ? 'active' : ''}
-                      onClick={() => setFilters((current) => ({ ...current, style: value }))}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="filter-group">
-                <span>按颜色看</span>
-                <div className="chip-filter-row">
-                  <button
-                    className={filters.colorGroup === 'all' ? 'active' : ''}
-                    onClick={() => setFilters((current) => ({ ...current, colorGroup: 'all' }))}
-                  >
-                    全部
-                  </button>
-                  {Object.entries(colorLabels).map(([value, label]) => (
-                    <button
-                      key={value}
-                      className={filters.colorGroup === value ? 'active' : ''}
-                      onClick={() => setFilters((current) => ({ ...current, colorGroup: value }))}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="filter-row">
-                <select
-                  value={filters.sort}
-                  onChange={(event) =>
-                    setFilters((current) => ({
-                      ...current,
-                      sort: event.target.value as WardrobeSort,
-                    }))
-                  }
-                >
-                  {Object.entries(wardrobeSortLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-                {hasActiveWardrobeFilters ? (
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() =>
-                      setFilters((current) => ({
-                        ...current,
-                        category: 'all',
-                        colorGroup: 'all',
-                        style: 'all',
-                      }))
-                    }
-                  >
-                    清空筛选
-                  </button>
-                ) : null}
-              </div>
-            </div>
+            <WardrobeFilterPanel
+              filters={filters}
+              hasActiveWardrobeFilters={hasActiveWardrobeFilters}
+              setFilters={setFilters}
+            />
 
             <div className="wardrobe-summary-row">
               <div className="metric-card">
@@ -2713,352 +2930,70 @@ function App() {
             </div>
 
             {wardrobeEdit && editingWardrobeItem ? (
-              <article className="settings-card wardrobe-editor">
-                <div className="section-head">
-                  <h3>编辑这件衣服</h3>
-                  <p>改完会直接影响后面的推荐和替换结果。</p>
-                </div>
-
-                <div className="wardrobe-editor-grid">
-                  <div className="wardrobe-editor-visual">
-                    <div className={`upload-preview compact-preview ${subjectCutEnabled ? 'subject-preview' : ''}`}>
-                      {wardrobeEdit.imageUrl ? (
-                        <img src={wardrobeEdit.imageUrl} alt={wardrobeEdit.name} />
-                      ) : editingWardrobeItem.imageUrl ? (
-                        <img src={editingWardrobeItem.imageUrl} alt={editingWardrobeItem.name} />
-                      ) : (
-                        <p>换一张更干净的单品图，后面的推荐页会更统一。</p>
-                      )}
-                    </div>
-                    {subjectCutEnabled ? <small className="preview-note">棋盘底纹用于检查透明背景；如果仍看到完整白底矩形，说明这张图还没有真正提取出主体。</small> : null}
-
-                    <label className="upload-field inline-upload-field">
-                      <span>重新上传衣物图</span>
-                      <input accept="image/*" capture="environment" type="file" onChange={handleWardrobeEditImageUpload} />
-                    </label>
-
-                    <div className="inline-image-actions">
-                      <button type="button" className="ghost" onClick={handleRemoveWardrobeEditImage}>
-                        移除当前图片
-                      </button>
-                    </div>
-
-                    <div className="upload-helper compact-helper">
-                      <strong>{editImagePreparing ? '正在处理新图片…' : '编辑图片提示'}</strong>
-                      <p>{editImageHint}</p>
-                    </div>
-
-                    {editRawImageUrl ? (
-                      <div className="image-tools compact-image-tools">
-                        <span>换图裁剪模式</span>
-                        <div className="preset-row">
-                          {(Object.keys(imagePresetLabels) as ImagePreset[]).map((preset) => (
-                            <button
-                              key={preset}
-                              type="button"
-                              className={editImagePreset === preset ? 'active' : ''}
-                              onClick={() => handleApplyWardrobeEditPreset(preset)}
-                              disabled={editImagePreparing}
-                            >
-                              {imagePresetLabels[preset]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {editSmartDraft ? (
-                      <div className="smart-draft">
-                        <div>
-                          <strong>换图后的建议标签</strong>
-                          <p>{editSmartDraft.note}</p>
-                        </div>
-                        {editSmartDraft.source === 'local' ? <small className="draft-warning">这一步还是本地粗略判断，建议你手动确认品类后再保存。</small> : null}
-                      <div className="chip-row">
-                        <span className="chip">{categoryLabels[editSmartDraft.category]}</span>
-                        <span className="chip">{colorLabels[editSmartDraft.colorGroup]}</span>
-                        <span className="chip">{styleLabels[editSmartDraft.style]}</span>
-                        <span className="chip">{thicknessLabels[editSmartDraft.thickness]}</span>
-                        <span className="chip">{seasonLabels[editSmartDraft.seasonFit]}</span>
-                        <span className="chip">{fitTypeLabels[editSmartDraft.fitType]}</span>
-                        <span className="chip">{garmentLengthLabels[editSmartDraft.garmentLength]}</span>
-                        <span className="chip">{sleeveLengthLabels[editSmartDraft.sleeveLength]}</span>
-                        <span className="chip">{silhouetteLabels[editSmartDraft.silhouette]}</span>
-                      </div>
-                        <button type="button" className="secondary" onClick={applyWardrobeEditSmartDraft}>
-                          一键套用建议
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="item-form compact-form">
-                    <label hidden>
-                      <span>衣物名称</span>
-                      <input
-                        value={wardrobeEdit.name}
-                        onChange={(event) => setWardrobeEdit((current) => (current ? { ...current, name: event.target.value } : current))}
-                      />
-                    </label>
-
-                    <label>
-                      <span>品类</span>
-                      <select hidden
-                        value={wardrobeEdit.category}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, category: event.target.value as ClothingCategory } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(categoryLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>颜色</span>
-                      <select
-                        value={wardrobeEdit.colorGroup}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, colorGroup: event.target.value as ColorGroup } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(colorLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>厚薄</span>
-                      <select
-                        value={wardrobeEdit.thickness}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, thickness: event.target.value as Thickness } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(thicknessLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>风格</span>
-                      <select
-                        value={wardrobeEdit.style}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, style: event.target.value as StyleTag } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(styleLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>适穿季节</span>
-                      <select
-                        value={wardrobeEdit.seasonFit}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, seasonFit: event.target.value as SeasonFit } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(seasonLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>版型</span>
-                      <select
-                        value={wardrobeEdit.fitType}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, fitType: event.target.value as FitType } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(fitTypeLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>衣长</span>
-                      <select
-                        value={wardrobeEdit.garmentLength}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, garmentLength: event.target.value as GarmentLength } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(garmentLengthLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>袖长</span>
-                      <select
-                        value={wardrobeEdit.sleeveLength}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, sleeveLength: event.target.value as SleeveLength } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(sleeveLengthLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>廓形</span>
-                      <select
-                        value={wardrobeEdit.silhouette}
-                        onChange={(event) =>
-                          setWardrobeEdit((current) =>
-                            current ? { ...current, silhouette: event.target.value as Silhouette } : current,
-                          )
-                        }
-                      >
-                        {Object.entries(silhouetteLabels).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="action-row">
-                  <button className="primary" onClick={handleSaveWardrobeEdit} disabled={wardrobeSaving}>
-                    {wardrobeSaving ? '保存中…' : '保存修改'}
-                  </button>
-                  <button
-                    className="ghost"
-                    onClick={() => {
-                      setWardrobeEdit(null)
-                      setEditRawImageUrl('')
-                      setEditImagePreset('studio')
-                      setEditImageHint('换图后也会继续自动整理成更干净的单品卡片。')
-                    }}
-                  >
-                    先不改了
-                  </button>
-                </div>
-              </article>
+              <WardrobeEditorPanel
+                applyWardrobeEditSmartDraft={applyWardrobeEditSmartDraft}
+                editImageHint={editImageHint}
+                editImagePreparing={editImagePreparing}
+                editImagePreset={editImagePreset}
+                editRawImageUrl={editRawImageUrl}
+                editSmartDraft={editSmartDraft}
+                editingWardrobeItem={editingWardrobeItem}
+                handleApplyWardrobeEditPreset={handleApplyWardrobeEditPreset}
+                handleRemoveWardrobeEditImage={handleRemoveWardrobeEditImage}
+                handleSaveWardrobeEdit={handleSaveWardrobeEdit}
+                handleWardrobeEditImageUpload={handleWardrobeEditImageUpload}
+                onCancel={() => {
+                  setWardrobeEdit(null)
+                  setEditRawImageUrl('')
+                  setEditImagePreset('studio')
+                  setEditImageHint('换图会先直接显示原图，后面再继续补标签；想要更干净的展示图时再开主体提取。')
+                }}
+                setWardrobeEdit={setWardrobeEdit}
+                subjectCutEnabled={subjectCutEnabled}
+                wardrobeEdit={wardrobeEdit}
+                wardrobeSaving={wardrobeSaving}
+              />
             ) : null}
 
             {focusedWardrobeItem ? (
-              <article className="settings-card wardrobe-detail-card">
-                <div className="section-head">
-                  <div>
-                    <h3>{focusedWardrobeItem.name}</h3>
-                    <p>先确认这件衣服的状态和标签，再决定要不要继续修改。</p>
-                  </div>
-                  <button className="ghost" onClick={() => setWardrobeFocusId(null)}>
-                    收起详情
-                  </button>
-                </div>
-
-                <div className="wardrobe-detail-grid">
-                  <div>{renderItemVisual(focusedWardrobeItem)}</div>
-
-                  <div className="wardrobe-detail-copy">
-                    <div className="chip-row">
-                      <span className="chip">{categoryLabels[focusedWardrobeItem.category]}</span>
-                      <span className="chip">{styleLabels[focusedWardrobeItem.style]}</span>
-                      <span className="chip">{thicknessLabels[focusedWardrobeItem.thickness]}</span>
-                      <span className="chip">{colorLabels[focusedWardrobeItem.colorGroup]}</span>
-                      <span className="chip">{seasonLabels[focusedWardrobeItem.seasonFit]}</span>
-                      <span className="chip">{fitTypeLabels[focusedWardrobeItem.fitType]}</span>
-                    </div>
-
-                    <div className="wardrobe-detail-stats">
-                      <div className="metric-card">
-                        <strong>{focusedWardrobeItem.wearCount}</strong>
-                        <span>累计穿着</span>
-                      </div>
-                      <div className="metric-card">
-                        <strong>{focusedWardrobeItem.lastWornAt ?? '还没记录'}</strong>
-                        <span>最近一次穿着</span>
-                      </div>
-                      <div className="metric-card">
-                        <strong>{focusedWardrobeItem.preferenceScore}</strong>
-                        <span>当前偏好分</span>
-                      </div>
-                    </div>
-
-                    <div className="action-row">
-                      <button className="primary" onClick={() => openWardrobeEditor(focusedWardrobeItem)}>
-                        {wardrobeEdit?.id === focusedWardrobeItem.id ? '继续编辑这件' : '编辑这件'}
-                      </button>
-                      <button className="ghost danger" onClick={() => handleDeleteItem(focusedWardrobeItem.id)}>
-                        删除这件
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </article>
+              <WardrobeDetailCard
+                focusedWardrobeItem={focusedWardrobeItem}
+                isEditingCurrentItem={wardrobeEdit?.id === focusedWardrobeItem.id}
+                onClose={() => setWardrobeFocusId(null)}
+                onDelete={handleDeleteItem}
+                onEdit={openWardrobeEditor}
+                renderItemVisual={renderItemVisual}
+              />
             ) : null}
 
             <div className="wardrobe-grid">
               {filteredWardrobe.map((item) => (
                 <article className="wardrobe-card" key={item.id}>
-                  {renderItemVisual(item)}
+                  <div className="wardrobe-card-visual">
+                    {renderItemVisual(item)}
+                    <div className="wardrobe-card-meta">
+                      <span className="item-badge">{categoryLabels[item.category]}</span>
+                      <span className="item-badge subtle">{item.wearCount > 0 ? `穿过 ${item.wearCount} 次` : '新加入'}</span>
+                    </div>
+                  </div>
                   <div className="wardrobe-copy">
                     <strong>{item.name}</strong>
                     <p>
-                      {styleLabels[item.style]} / {thicknessLabels[item.thickness]} / {seasonLabels[item.seasonFit]}
+                      {colorLabels[item.colorGroup]} / {styleLabels[item.style]} / {seasonLabels[item.seasonFit]}
                     </p>
-                    <small>
-                      穿过 {item.wearCount} 次{item.lastWornAt ? ` / 最近 ${item.lastWornAt}` : ''}
-                    </small>
+                    <small>{item.lastWornAt ? `最近穿过 ${item.lastWornAt}` : '还没留下穿着记录'}</small>
                   </div>
-                  <button className="ghost" onClick={() => setWardrobeFocusId(item.id)}>
-                    详情
-                  </button>
-                  <button className="ghost" onClick={() => openWardrobeEditor(item)}>
-                    编辑
-                  </button>
-                  <button className="ghost danger" onClick={() => handleDeleteItem(item.id)}>
-                    删除
-                  </button>
+                  <div className="wardrobe-card-actions">
+                    <button className="primary" onClick={() => setWardrobeFocusId(item.id)}>
+                      看这件
+                    </button>
+                    <button className="ghost" onClick={() => openWardrobeEditor(item)}>
+                      编辑
+                    </button>
+                    <button className="ghost danger" onClick={() => handleDeleteItem(item.id)}>
+                      删除
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>
@@ -3072,509 +3007,81 @@ function App() {
         ) : null}
 
         {!bootstrapLoading && activeTab === 'add' ? (
-          <section className="page form-page">
-            <div className="section-head">
-              <h2>新增衣物</h2>
-              <p>先录入常穿的 5 到 10 件，就已经足够开始稳定推荐。</p>
-            </div>
-
-            <div className="add-intake-panel">
-              <div className="section-head compact-head">
-                <h3>先选录入方式</h3>
-                <p>{intakeModeMeta[preferredAddIntake].note}</p>
-              </div>
-              <div className="add-intake-grid">
-                {(Object.keys(intakeModeMeta) as AddIntakeMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    className={`add-intake-card${preferredAddIntake === mode ? ' active' : ''}`}
-                    onClick={() => openAddIntake(mode)}
-                  >
-                    <strong>{intakeModeMeta[mode].title}</strong>
-                    <span>{intakeModeMeta[mode].note}</span>
-                  </button>
-                ))}
-              </div>
-              <input id="add-intake-camera" hidden accept="image/*" capture="environment" type="file" onChange={handleImageUpload} />
-              <input id="add-intake-gallery" hidden accept="image/*" type="file" onChange={handleImageUpload} />
-              <input id="add-intake-batch" hidden accept="image/*" type="file" multiple onChange={handleImageUpload} />
-            </div>
-
-            <form className="item-form" id="add-item-form" onSubmit={handleAddItem}>
-              <label className="upload-field">
-                <span>衣物照片</span>
-                <input accept="image/*" capture="environment" type="file" multiple onChange={handleImageUpload} />
-                <div className="preview-toolbar">
-                  <div className="preview-status">
-                    <strong>{currentPreviewMethod ? getCutoutMethodLabel(currentPreviewMethod) : '等待上传'}</strong>
-                    <span>
-                      {currentPreviewMethod === 'ai_cutout'
-                        ? '当前应为透明底，切换深色底板更容易看边缘是否干净。'
-                        : currentPreviewMethod === 'ai_studio_fallback'
-                          ? '当前是 AI 整理后的灰底单品图，还没有进入透明底。'
-                          : '上传后这里会显示当前走的是 AI 抠图还是兜底分支。'}
-                    </span>
-                  </div>
-                  <div className="preview-backdrop-toggle" role="group" aria-label="预览背景">
-                    {(
-                      [
-                        ['checker', '棋盘'],
-                        ['dark', '深色'],
-                        ['warm', '暖底'],
-                      ] as const
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className={previewBackdrop === value ? 'active' : ''}
-                        onClick={() => setPreviewBackdrop(value)}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className={`upload-preview ${subjectCutEnabled ? 'subject-preview' : ''} preview-backdrop-${previewBackdrop}`}>
-                  {addForm.imageUrl ? <img src={addForm.imageUrl} alt="衣物预览" /> : <p>上传后会直接显示在首页推荐卡和衣橱列表里。</p>}
-                </div>
-                {subjectCutEnabled ? (
-                  <small className="preview-note">
-                    棋盘底纹适合看透明区，深色底更适合查浅色衣服边缘，暖底更容易看出是否还残留灰雾。
-                  </small>
-                ) : null}
-              </label>
-
-              <div className="upload-helper">
-                <strong>{imagePreparing ? '正在处理图片…' : '图片录入提示'}</strong>
-                <p>{imageHint}</p>
-              </div>
-
-              {batchExtractionTotal > 1 ? (
-                <div className="batch-progress-card">
-                  <div className="batch-progress-copy">
-                    <strong>
-                      批量提取进度 {batchExtractionCompleted}/{batchExtractionTotal}
-                    </strong>
-                    <span>{imagePreparing && batchExtractionCurrentName ? `正在处理：${batchExtractionCurrentName}` : '这批结果会保留在下面，点任意一张即可切回继续录入。'}</span>
-                  </div>
-                  <div className="batch-progress-track" aria-hidden="true">
-                    <div className="batch-progress-fill" style={{ width: `${batchExtractionProgress}%` }} />
-                  </div>
-                </div>
-              ) : null}
-
-              {batchExtractionItems.length > 1 ? (
-                <div className="batch-panel">
-                  <div className="section-head compact-head">
-                    <h3>批量提取结果</h3>
-                    <p>可以逐张点开检查，当前表单会切换到你选中的那张。</p>
-                  </div>
-                  <div className="inline-image-actions">
-                    <button type="button" className="ghost" onClick={clearBatchExtraction}>
-                      清空这批结果
-                    </button>
-                  </div>
-                  <div className="batch-grid">
-                    {batchExtractionItems.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`batch-card${batchExtractionSelectedId === item.id ? ' active' : ''}${item.status === 'error' ? ' error' : ''}`}
-                        onClick={() => applyBatchExtractionItem(item)}
-                        disabled={item.status !== 'done'}
-                      >
-                        <div className="batch-thumb">
-                          {item.imageUrl ? <img src={item.imageUrl} alt={item.fileName} /> : <span>失败</span>}
-                        </div>
-                        <strong>{item.fileName}</strong>
-                        <small>{item.status === 'done' ? (item.extracted ? '主体已提取' : '保留原图') : item.errorMessage}</small>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              {canQuickConfirmAdd ? (
-                <div className="quick-confirm-card">
-                  <div className="quick-confirm-copy">
-                    <strong>这张图已经可以直接入衣橱</strong>
-                    <p>主体、名称和主要标签都已经准备好。赶时间时直接确认保存，之后再慢慢微调也行。</p>
-                  </div>
-                  <div className="chip-row">
-                    <span className="chip">{addForm.name}</span>
-                    <span className="chip">{categoryLabels[addForm.category]}</span>
-                    <span className="chip">{colorLabels[addForm.colorGroup]}</span>
-                    <span className="chip">{styleLabels[addForm.style]}</span>
-                  </div>
-                  <div className="quick-confirm-actions">
-                    <button className="primary" type="submit" disabled={itemSaving || imagePreparing}>
-                      {itemSaving ? '保存中…' : '确认加入衣橱'}
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => {
-                        document.getElementById('add-item-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                        setFeedback('这张图已经够用了，如果你想更细调标签，直接往下改就行。')
-                      }}
-                    >
-                      再改细一点
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="subject-mode-card">
-                <div>
-                  <strong>自动分离背景与主体</strong>
-                  <p>默认开启。保存上传时会尽量把衣服主体提出来，让单品图更像干净卡片。</p>
-                </div>
-                <button
-                  type="button"
-                  className={subjectCutEnabled ? 'secondary' : 'ghost'}
-                  onClick={() => setSubjectCutEnabled((current) => !current)}
-                >
-                  {subjectCutEnabled ? '已开启' : '已关闭'}
-                </button>
-              </div>
-
-              {addForm.imageUrl ? (
-                <div className="inline-image-actions">
-                  <button type="button" className="ghost" onClick={handleClearAddImage}>
-                    移除这张图片
-                  </button>
-                </div>
-              ) : null}
-
-              {rawImageUrl ? (
-                <>
-                  <div className="image-tools">
-                    <span>裁图模式</span>
-                    <div className="preset-row">
-                      {(Object.keys(imagePresetLabels) as ImagePreset[]).map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          className={imagePreset === preset ? 'active' : ''}
-                          onClick={() => handleApplyPreset(preset)}
-                          disabled={imagePreparing}
-                        >
-                          {imagePresetLabels[preset]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {smartDraft ? (
-                      <div className="smart-draft">
-                        <div>
-                          <strong>智能建议</strong>
-                          <p>{smartDraft.note}</p>
-                        </div>
-                      {smartDraft.source === 'local' ? <small className="draft-warning">这一步还是本地粗略判断，建议你手动确认品类后再保存。</small> : null}
-                      <div className="chip-row">
-                        <span className="chip">{categoryLabels[smartDraft.category]}</span>
-                        <span className="chip">{colorLabels[smartDraft.colorGroup]}</span>
-                        <span className="chip">{styleLabels[smartDraft.style]}</span>
-                        <span className="chip">{thicknessLabels[smartDraft.thickness]}</span>
-                        <span className="chip">{seasonLabels[smartDraft.seasonFit]}</span>
-                        <span className="chip">{fitTypeLabels[smartDraft.fitType]}</span>
-                        <span className="chip">{garmentLengthLabels[smartDraft.garmentLength]}</span>
-                        <span className="chip">{sleeveLengthLabels[smartDraft.sleeveLength]}</span>
-                        <span className="chip">{silhouetteLabels[smartDraft.silhouette]}</span>
-                      </div>
-                      <button type="button" className="secondary" onClick={applySmartDraft}>
-                        一键套用建议
-                      </button>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-
-              <label>
-                <span>衣物名称</span>
-                <input
-                  value={addForm.name}
-                  onChange={(event) => setAddForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="例如：奶油白短袖衬衫"
-                />
-              </label>
-
-              <label>
-                <span>品类</span>
-                <select value={addForm.category} onChange={(event) => setAddForm((current) => ({ ...current, category: event.target.value as ClothingCategory }))}>
-                  {Object.entries(categoryLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>颜色</span>
-                <select value={addForm.colorGroup} onChange={(event) => setAddForm((current) => ({ ...current, colorGroup: event.target.value as ColorGroup }))}>
-                  {Object.entries(colorLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>厚薄</span>
-                <select value={addForm.thickness} onChange={(event) => setAddForm((current) => ({ ...current, thickness: event.target.value as Thickness }))}>
-                  {Object.entries(thicknessLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>风格</span>
-                
-                <select value={addForm.style} onChange={(event) => setAddForm((current) => ({ ...current, style: event.target.value as StyleTag }))}>
-                  {Object.entries(styleLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>适穿季节</span>
-                <select value={addForm.seasonFit} onChange={(event) => setAddForm((current) => ({ ...current, seasonFit: event.target.value as SeasonFit }))}>
-                  {Object.entries(seasonLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>版型</span>
-                <select value={addForm.fitType} onChange={(event) => setAddForm((current) => ({ ...current, fitType: event.target.value as FitType }))}>
-                  {Object.entries(fitTypeLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>衣长</span>
-                <select value={addForm.garmentLength} onChange={(event) => setAddForm((current) => ({ ...current, garmentLength: event.target.value as GarmentLength }))}>
-                  {Object.entries(garmentLengthLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>袖长</span>
-                <select value={addForm.sleeveLength} onChange={(event) => setAddForm((current) => ({ ...current, sleeveLength: event.target.value as SleeveLength }))}>
-                  {Object.entries(sleeveLengthLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>廓形</span>
-                <select value={addForm.silhouette} onChange={(event) => setAddForm((current) => ({ ...current, silhouette: event.target.value as Silhouette }))}>
-                  {Object.entries(silhouetteLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <button className="primary" type="submit" disabled={itemSaving || imagePreparing}>
-                {itemSaving ? '保存中…' : '加入衣橱'}
-              </button>
-            </form>
-
-            <div className="mobile-tip-card">
-              <h3>手机上这样录更省事</h3>
-              <p>现在拍完照后不只可以直接裁图，还能一键套用颜色、风格和厚薄建议。</p>
-            </div>
-          </section>
+          <AddItemPanel
+            addForm={addForm}
+            batchExtractionCompleted={batchExtractionCompleted}
+            batchExtractionCurrentName={batchExtractionCurrentName}
+            batchExtractionItems={batchExtractionItems}
+            batchExtractionProgress={batchExtractionProgress}
+            batchExtractionSelectedId={batchExtractionSelectedId}
+            batchExtractionTotal={batchExtractionTotal}
+            canQuickConfirmAdd={canQuickConfirmAdd}
+            currentPreviewMethod={currentPreviewMethod}
+            handleAddItem={handleAddItem}
+            handleApplyPreset={handleApplyPreset}
+            handleClearAddImage={handleClearAddImage}
+            handleImageUpload={handleImageUpload}
+            imageHint={imageHint}
+            imagePreparing={imagePreparing}
+            imagePreset={imagePreset}
+            itemSaving={itemSaving}
+            onApplySmartDraft={applySmartDraft}
+            onOpenAddIntake={openAddIntake}
+            onPickBatchItem={(id) => {
+              const item = batchExtractionItems.find((entry) => entry.id === id)
+              if (item) applyBatchExtractionItem(item)
+            }}
+            preferredAddIntake={preferredAddIntake}
+            previewBackdrop={previewBackdrop}
+            rawImageUrl={rawImageUrl}
+            setAddForm={setAddForm}
+            setFeedbackToEditHint={handleAddQuickEditHint}
+            setPreviewBackdrop={setPreviewBackdrop}
+            setSubjectCutEnabled={setSubjectCutEnabled}
+            smartDraft={smartDraft}
+            subjectCutEnabled={subjectCutEnabled}
+          />
         ) : null}
 
         {!bootstrapLoading && activeTab === 'tryon' ? (
           <section className="page profile-page">
             <div className="section-head">
-              <h2>试穿预览</h2>
-              <p>先把参考照和单品整理好，展示上身效果会更顺。</p>
+              <h2>试穿效果</h2>
+              <p>这里直接看当前整套，不再单独挑一件去试。</p>
             </div>
 
             <div className="profile-grid">
-              <article className="settings-card">
-                <div className="settings-card-head">
-                  <div>
-                    <h3>创建试穿任务</h3>
-                    <p>用你的参考照搭配一件整理好的单品，先快速生成一条预览任务。</p>
-                  </div>
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={handleCreateTryOnSession}
-                    disabled={!tryOnReadiness.canStartPreview || !selectedTryOnItemId || tryOnCreating}
-                  >
-                    {tryOnCreating ? '创建中…' : '创建任务'}
-                  </button>
-                </div>
+              <TryOnBuilderCard
+                canRunPrimaryTryOnAction={canRunPrimaryTryOnAction}
+                currentLook={currentLook}
+                currentTryOnGenerationMessage={currentTryOnGenerationMessage}
+                effectiveTryOnSelection={effectiveTryOnSelection}
+                handleClearTryOnSelection={handleClearTryOnSelection}
+                handleFillTryOnFromCurrentLook={handleFillTryOnFromCurrentLook}
+                handlePrimaryTryOnAction={handlePrimaryTryOnAction}
+                primaryTryOnActionLabel={primaryTryOnActionLabel}
+                renderLookStage={renderLookStage}
+                renderTryOnSlotField={renderTryOnSlotField}
+                scene={scene}
+                selectedTryOnBlockingMessage={selectedTryOnBlockingMessage}
+                tryOnCreating={tryOnCreating}
+                tryOnGarmentItems={tryOnGarmentItems}
+                tryOnPreviewImageUrl={tryOnPreviewImageUrl}
+                tryOnPreviewIsOutfitGeneration={tryOnPreviewIsOutfitGeneration}
+                tryOnPreviewItems={tryOnPreviewItems}
+                tryOnPreviewLook={tryOnPreviewLook}
+                tryOnReadiness={tryOnReadiness}
+                tryOnSlotOptions={tryOnSlotOptions}
+              />
 
-                <div className="try-on-setup-grid">
-                  <div className="try-on-setup-pane">
-                    <strong>本人参考照</strong>
-                    <div className="try-on-photo-preview">
-                      {avatarProfile.tryOnPhotoUrl ? (
-                        <img src={avatarProfile.tryOnPhotoUrl} alt="本人试穿参考照" />
-                      ) : (
-                        <span>先去“我的”里上传参考照</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="try-on-setup-pane">
-                    <strong>当前选中的单品</strong>
-                    {selectedTryOnItem ? (
-                      <div className="try-on-selected-card">
-                        {renderItemVisual(selectedTryOnItem)}
-                        <div className="item-copy">
-                          <strong>{selectedTryOnItem.name}</strong>
-                          <p>
-                            {categoryLabels[selectedTryOnItem.category]} / {garmentLengthLabels[selectedTryOnItem.garmentLength ?? 'regular']} /{' '}
-                            {silhouetteLabels[selectedTryOnItem.silhouette ?? 'straight']}
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="empty-inline">先录入至少一件带图片的上衣、下装或裙装。</div>
-                    )}
-                  </div>
-                </div>
-
-                <label>
-                  <span>选择试穿单品</span>
-                  <select value={selectedTryOnItemId} onChange={(event) => setSelectedTryOnItemId(event.target.value)}>
-                    {tryOnReadyItems.length === 0 ? (
-                      <option value="">暂无可试穿单品</option>
-                    ) : (
-                      tryOnReadyItems.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} / {categoryLabels[item.category]}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </label>
-
-                <div className="avatar-profile-summary">
-                  <span>{tryOnReadiness.hasTryOnPhoto ? '本人照已准备' : '缺少本人照'}</span>
-                  <span>{tryOnReadiness.readyCount} 件可试穿单品</span>
-                  <span>{tryOnReadiness.canStartPreview ? '可以开始接模型' : '建议再补单品或参考照'}</span>
-                </div>
-              </article>
-
-              <article className="settings-card wide-card">
-                <div className="settings-card-head">
-                  <div>
-                    <h3>试穿任务记录</h3>
-                    <p>现在先记录素材就绪状态，后面接入生成服务后可以直接把结果回写到这些任务里。</p>
-                  </div>
-                  <span className={`readiness-pill${tryOnSessions.length > 0 ? ' ready' : ''}`}>{tryOnSessions.length} 条任务</span>
-                </div>
-
-                <div className="saved-filter-row">
-                  {Object.entries(tryOnStatusFilterLabels).map(([value, label]) => (
-                    <button
-                      key={value}
-                      className={tryOnStatusFilter === value ? 'active' : ''}
-                      onClick={() => setTryOnStatusFilter(value as TryOnStatusFilter)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="try-on-session-list">
-                  {filteredTryOnSessions.map((entry) => {
-                    const garment = wardrobe.find((item) => item.id === entry.garmentItemId)
-                    return (
-                      <article className="try-on-session-card" key={entry.id}>
-                        <div className="try-on-session-grid">
-                          <div className="try-on-session-preview">
-                            <div className="try-on-photo-preview compact">
-                              <img src={entry.personImageUrl} alt="本人参考照" />
-                            </div>
-                            <div className="try-on-session-plus">+</div>
-                            <div className="item-visual tone-black_white_gray category-top">
-                              <img src={entry.garmentImageUrl} alt={garment?.name ?? '试穿单品'} />
-                            </div>
-                          </div>
-
-                          <div className="try-on-session-copy">
-                            <div className="saved-look-topline">
-                              <strong>{garment?.name ?? '试穿单品'}</strong>
-                              <span>{formatSavedDate(entry.createdAt)}</span>
-                            </div>
-                            <div className="avatar-profile-summary compact-summary">
-                              <span>{getTryOnStatusLabel(entry.status)}</span>
-                              <span>{getTryOnProviderLabel(entry.provider)}</span>
-                              <span>{garment ? categoryLabels[garment.category] : '单品'}</span>
-                            </div>
-                            <p>{entry.note}</p>
-                            {entry.resultImageUrl ? (
-                              <div className="try-on-result-preview">
-                                <img src={entry.resultImageUrl} alt={`${garment?.name ?? '试穿单品'} 试穿结果`} />
-                              </div>
-                            ) : null}
-                            <div className="try-on-session-actions">
-                              {entry.resultImageUrl ? (
-                                <button className="ghost" type="button" onClick={() => setPreviewingTryOnSession(entry)}>
-                                  查看大图
-                                </button>
-                              ) : null}
-                              <button
-                                className="secondary"
-                                type="button"
-                                onClick={() => handleCreateMockPreview(entry.id)}
-                                disabled={tryOnPreviewingId === entry.id}
-                              >
-                                {tryOnPreviewingId === entry.id ? '生成中…' : entry.resultImageUrl ? '重新生成预览' : '生成试穿预览'}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </article>
-                    )
-                  })}
-                  {filteredTryOnSessions.length === 0 ? (
-                    <div className="empty-block">
-                      <h2>{tryOnSessions.length === 0 ? '还没有试穿任务' : '当前筛选下没有任务'}</h2>
-                      <p>
-                        {tryOnSessions.length === 0
-                          ? '上传本人参考照后，选一件已经整理好的单品，先创建第一条任务就行。'
-                          : '换一个状态筛选试试，或者继续生成新的试穿任务。'}
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              </article>
+              <TryOnResultsSection
+                recentTryOnSessions={recentTryOnSessions}
+                tryOnSessionsCount={tryOnSessions.length}
+                tryOnPreviewingId={tryOnPreviewingId}
+                wardrobeItemMap={wardrobeItemMap}
+                onOpenPreview={setPreviewingTryOnSession}
+                onRegenerate={(id) => handleCreateMockPreview(id)}
+              />
             </div>
           </section>
         ) : null}
@@ -3587,299 +3094,24 @@ function App() {
             </div>
 
             <div className="profile-grid">
-              <article className="settings-card">
-                <h3>喜欢的风格</h3>
-                <div className="toggle-list">
-                  {Object.entries(styleLabels).map(([value, label]) => {
-                    const typedValue = value as StyleTag
-                    const active = preferences.preferredStyles.includes(typedValue)
-                    return (
-                      <button
-                        key={value}
-                        className={active ? 'active' : ''}
-                        onClick={() =>
-                          updatePreferences({
-                            ...preferences,
-                            preferredStyles: active
-                              ? preferences.preferredStyles.filter((entry) => entry !== typedValue)
-                              : [...preferences.preferredStyles, typedValue].slice(-3),
-                          })
-                        }
-                      >
-                        {label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </article>
-
-              <article className="settings-card">
-                <h3>舒适优先项</h3>
-                <select
-                  value={preferences.comfortPriority}
-                  onChange={(event) =>
-                    updatePreferences({
-                      ...preferences,
-                      comfortPriority: event.target.value as ComfortPriority,
-                    })
-                  }
-                >
-                  {Object.entries(comfortOptions).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </article>
-
-              <article className="settings-card">
-                <h3>默认场景</h3>
-                <select
-                  value={preferences.defaultScene}
-                  onChange={(event) => {
-                    const nextScene = event.target.value as Scene
-                    updatePreferences({ ...preferences, defaultScene: nextScene })
-                    setScene(nextScene)
-                  }}
-                >
-                  {Object.entries(sceneLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </article>
-
-              <article className="settings-card">
-                <h3>推荐设置</h3>
-                <div className="checkbox-list">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={preferences.acceptsLayering}
-                      onChange={(event) =>
-                        updatePreferences({
-                          ...preferences,
-                          acceptsLayering: event.target.checked,
-                        })
-                      }
-                    />
-                    接受叠穿
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={preferences.avoidRepeatLooks}
-                      onChange={(event) =>
-                        updatePreferences({
-                          ...preferences,
-                          avoidRepeatLooks: event.target.checked,
-                        })
-                      }
-                    />
-                    尽量避免重复推荐
-                  </label>
-                </div>
-              </article>
-
-              <article className="settings-card">
-                <div className="settings-card-head">
-                  <div>
-                    <h3>我的身材档案</h3>
-                    <p>先把基础体型填完整，后续推荐和展示都会更贴近你。</p>
-                  </div>
-                  <button className="secondary" type="button" onClick={handleSaveAvatarProfile} disabled={avatarSaving}>
-                    {avatarSaving ? '保存中…' : '保存档案'}
-                  </button>
-                </div>
-
-                <input id="try-on-photo-input" hidden accept="image/*" type="file" onChange={handleTryOnPhotoUpload} />
-
-                <div className="try-on-photo-card">
-                  <div className="try-on-photo-copy">
-                    <strong>本人试穿参考照</strong>
-                    <p>建议上传一张正面、站姿自然、背景尽量干净的全身照，后面接试衣会更稳。</p>
-                  </div>
-                  <div className="try-on-photo-preview">
-                    {avatarProfile.tryOnPhotoUrl ? (
-                      <img src={avatarProfile.tryOnPhotoUrl} alt="试穿参考照" />
-                    ) : (
-                      <span>还没有上传试穿参考照</span>
-                    )}
-                  </div>
-                  <button className="ghost" type="button" onClick={openTryOnPhotoPicker} disabled={avatarPhotoUploading}>
-                    {avatarPhotoUploading ? '上传中…' : avatarProfile.tryOnPhotoUrl ? '更换参考照' : '上传参考照'}
-                  </button>
-                </div>
-
-                <div className="avatar-profile-grid">
-                  <label>
-                    <span>身高（cm）</span>
-                    <input
-                      type="number"
-                      min={130}
-                      max={220}
-                      value={avatarProfile.heightCm}
-                      onChange={(event) => updateAvatarField('heightCm', Number(event.target.value || 0))}
-                    />
-                  </label>
-
-                  <label>
-                    <span>体重（kg）</span>
-                    <input
-                      type="number"
-                      min={30}
-                      max={180}
-                      value={avatarProfile.weightKg}
-                      onChange={(event) => updateAvatarField('weightKg', Number(event.target.value || 0))}
-                    />
-                  </label>
-
-                  <label>
-                    <span>风格呈现</span>
-                    <select
-                      value={avatarProfile.genderPresentation}
-                      onChange={(event) => updateAvatarField('genderPresentation', event.target.value as GenderPresentation)}
-                    >
-                      {Object.entries(genderPresentationLabels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    <span>整体身形</span>
-                    <select value={avatarProfile.bodyShape} onChange={(event) => updateAvatarField('bodyShape', event.target.value as BodyShape)}>
-                      {Object.entries(bodyShapeLabels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    <span>肩部观感</span>
-                    <select value={avatarProfile.shoulderType} onChange={(event) => updateAvatarField('shoulderType', event.target.value as ShoulderType)}>
-                      {Object.entries(shoulderTypeLabels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    <span>腰线观感</span>
-                    <select value={avatarProfile.waistType} onChange={(event) => updateAvatarField('waistType', event.target.value as WaistType)}>
-                      {Object.entries(waistTypeLabels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    <span>胯臀观感</span>
-                    <select value={avatarProfile.hipType} onChange={(event) => updateAvatarField('hipType', event.target.value as HipType)}>
-                      {Object.entries(hipTypeLabels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    <span>腿长比例</span>
-                    <select value={avatarProfile.legLengthType} onChange={(event) => updateAvatarField('legLengthType', event.target.value as LegLengthType)}>
-                      {Object.entries(legLengthLabels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                <div className="avatar-profile-summary">
-                  <span>{avatarProfile.heightCm} cm / {avatarProfile.weightKg} kg</span>
-                  <span>{bodyShapeLabels[avatarProfile.bodyShape]}</span>
-                  <span>{shoulderTypeLabels[avatarProfile.shoulderType]}肩</span>
-                  <span>{waistTypeLabels[avatarProfile.waistType]}腰线</span>
-                  <span>{hipTypeLabels[avatarProfile.hipType]}胯臀</span>
-                </div>
-              </article>
-
-              <article className="settings-card">
-                <div className="settings-card-head">
-                  <div>
-                    <h3>试穿准备度</h3>
-                    <p>
-                      {tryOnReadiness.canStartPreview
-                        ? '基础素材已经够用了，可以直接开始生成预览。'
-                        : '再补一点素材，就能更顺手地看上身效果。'}
-                    </p>
-                  </div>
-                  <span className={`readiness-pill${tryOnReadiness.canStartPreview ? ' ready' : ''}`}>
-                    {tryOnReadiness.canStartPreview ? '已可开始' : '继续补素材'}
-                  </span>
-                </div>
-
-                <div className="saved-metrics">
-                  <div className="metric-card">
-                    <strong>{tryOnReadiness.hasTryOnPhoto ? '已上传' : '未上传'}</strong>
-                    <span>本人参考照</span>
-                  </div>
-                  <div className="metric-card">
-                    <strong>{tryOnReadiness.readyCount}</strong>
-                    <span>件可试穿单品</span>
-                  </div>
-                  <div className="metric-card">
-                    <strong>{tryOnReadiness.tops + tryOnReadiness.dresses}</strong>
-                    <span>上装/裙装</span>
-                  </div>
-                </div>
-
-                <div className="avatar-profile-summary">
-                  <span>上衣 {tryOnReadiness.tops} 件</span>
-                  <span>下装 {tryOnReadiness.bottoms} 件</span>
-                  <span>连衣裙 {tryOnReadiness.dresses} 件</span>
-                  <span>外套 {tryOnReadiness.outerwear} 件</span>
-                  <span>鞋子 {tryOnReadiness.shoes} 双</span>
-                </div>
-              </article>
-
-              <article className="settings-card">
-                <h3>当前账号</h3>
-                <p>{session.nickname}</p>
-                <p>{session.phone}</p>
-                <button className="ghost" onClick={handleLogout}>
-                  退出登录
-                </button>
-              </article>
-
-              <article className="settings-card">
-                <h3>使用概览</h3>
-                <div className="saved-metrics">
-                  <div className="metric-card">
-                    <strong>{wardrobe.length}</strong>
-                    <span>件衣物</span>
-                  </div>
-                  <div className="metric-card">
-                    <strong>{historyLooks.length}</strong>
-                    <span>次穿搭记录</span>
-                  </div>
-                  <div className="metric-card">
-                    <strong>{favoriteLooks.length}</strong>
-                    <span>套收藏搭配</span>
-                  </div>
-                </div>
-              </article>
-
+              <ProfileSettingsPanel
+                avatarPhotoUploading={avatarPhotoUploading}
+                avatarProfile={avatarProfile}
+                avatarSaving={avatarSaving}
+                favoriteLooksCount={favoriteLooks.length}
+                handleLogout={handleLogout}
+                handleSaveAvatarProfile={handleSaveAvatarProfile}
+                handleTryOnPhotoUpload={handleTryOnPhotoUpload}
+                historyLooksCount={historyLooks.length}
+                openTryOnPhotoPicker={openTryOnPhotoPicker}
+                preferences={preferences}
+                session={session}
+                setScene={setScene}
+                tryOnReadiness={tryOnReadiness}
+                updateAvatarField={updateAvatarField}
+                updatePreferences={updatePreferences}
+                wardrobeCount={wardrobe.length}
+              />
               {renderSavedLookSection()}
             </div>
           </section>

@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "concurrently \"npm:dev:api\" \"npm:dev:web\"",
     "dev:web": "vite",
-    "dev:api": "node server/index.mjs",
-    "start": "node server/index.mjs",
+    "dev:api": "node --env-file=.env server/index.mjs",
+    "start": "node --env-file=.env server/index.mjs",
+    "start:prod": "node --env-file=.env.production server/index.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@alicloud/imageseg20191230": "^4.0.1",
+    "@alicloud/openapi-client": "^0.4.15",
+    "@alicloud/tea-util": "^1.4.11",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "react": "^19.2.6",

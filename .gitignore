@@ -28,4 +28,6 @@ server/data/*.db
 server/data/*.db-*
 !.gitkeep
 .env
+.env.production
 .tmp-*
+release/

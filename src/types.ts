@@ -18,7 +18,7 @@ export type ComfortPriority =
   | 'lightness_first'
   | 'slimming_first'
   | 'versatile_first'
-export type ReplaceCategory = Exclude<ClothingCategory, 'dress'>
+export type ReplaceCategory = ClothingCategory
 export type GarmentLength = 'short' | 'regular' | 'long' | 'midi' | 'maxi'
 export type SleeveLength = 'sleeveless' | 'short' | 'three_quarter' | 'long' | 'na'
 export type Silhouette = 'fitted' | 'straight' | 'relaxed' | 'a_line'
@@ -50,9 +50,12 @@ export interface WardrobeItem {
   silhouette?: Silhouette
   preferenceScore: number
   wearCount: number
+  createdAt?: string
   lastWornAt?: string
   isDisliked: boolean
   imageUrl?: string | null
+  displayImageUrl?: string | null
+  sourceImageUrl?: string | null
 }
 
 export interface UserPreferences {
@@ -111,6 +114,7 @@ export interface RecommendationLook {
   id: string
   style: StyleTag
   items: LookItem[]
+  backupOuterwear?: WardrobeItem | null
   scores: {
     total: number
     weather: number
@@ -134,10 +138,12 @@ export interface SavedLook {
 export interface TryOnSession {
   id: string
   garmentItemId: string
+  lookKey?: string | null
   personImageUrl: string
   garmentImageUrl: string
   resultImageUrl?: string | null
-  provider?: 'mock' | 'webhook'
+  baseResultImageUrl?: string | null
+  provider?: 'mock' | 'webhook' | 'aliyun' | 'doubao' | 'wan'
   status: 'draft_ready' | 'processing' | 'completed' | 'failed'
   createdAt: string
   updatedAt: string

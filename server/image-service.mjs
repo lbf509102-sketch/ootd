@@ -3,9 +3,92 @@ import { unlink } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { enhanceGarmentImageWithAi } from './garment-cutout-ai-service.mjs'
+import {
+  classifyAliyunSegmentationError,
+  hasAliyunSegmentationCredentials,
+  segmentProductImageWithAliyun,
+} from './segmentation-service.mjs'
+
+const SUBJECT_PROFILES = {
+  top: {
+    preserveMultipleComponents: false,
+    maxComponents: 1,
+    minComponentRatio: 0.2,
+    padding: 28,
+    minForegroundDensityAi: 0.12,
+    minForegroundDensityLocal: 0.2,
+  },
+  bottom: {
+    preserveMultipleComponents: false,
+    maxComponents: 1,
+    minComponentRatio: 0.18,
+    padding: 26,
+    minForegroundDensityAi: 0.11,
+    minForegroundDensityLocal: 0.18,
+  },
+  outerwear: {
+    preserveMultipleComponents: false,
+    maxComponents: 1,
+    minComponentRatio: 0.2,
+    padding: 30,
+    minForegroundDensityAi: 0.11,
+    minForegroundDensityLocal: 0.18,
+  },
+  dress: {
+    preserveMultipleComponents: false,
+    maxComponents: 1,
+    minComponentRatio: 0.16,
+    padding: 32,
+    minForegroundDensityAi: 0.1,
+    minForegroundDensityLocal: 0.16,
+  },
+  shoes: {
+    preserveMultipleComponents: true,
+    maxComponents: 4,
+    minComponentRatio: 0.1,
+    padding: 64,
+    minForegroundDensityAi: 0.07,
+    minForegroundDensityLocal: 0.12,
+  },
+  accessory: {
+    preserveMultipleComponents: true,
+    maxComponents: 3,
+    minComponentRatio: 0.12,
+    padding: 24,
+    minForegroundDensityAi: 0.08,
+    minForegroundDensityLocal: 0.14,
+  },
+  default: {
+    preserveMultipleComponents: false,
+    maxComponents: 1,
+    minComponentRatio: 0.2,
+    padding: 24,
+    minForegroundDensityAi: 0.12,
+    minForegroundDensityLocal: 0.22,
+  },
+}
+
+function getSubjectProfile(categoryHint = '') {
+  const category = String(categoryHint).trim().toLowerCase()
+  return SUBJECT_PROFILES[category] || SUBJECT_PROFILES.default
+}
 
 export function ensureUploadDir(dir) {
   mkdirSync(dir, { recursive: true })
+}
+
+function shouldAllowLegacySubjectFallback() {
+  return String(process.env.ALLOW_LEGACY_SUBJECT_FALLBACK ?? '').trim().toLowerCase() === 'true'
+}
+
+async function saveOriginalImageToFile({ image, filePath, quality }) {
+  await image
+    .clone()
+    .webp({
+      quality,
+      effort: 4,
+    })
+    .toFile(filePath)
 }
 
 function clampChannel(value) {
@@ -82,9 +165,54 @@ function buildBackgroundSample(data, width, height) {
   ]
 }
 
+function assessBackdropSimplicity(data, width, height) {
+  const background = buildBackgroundSample(data, width, height)
+  const edgeStep = Math.max(1, Math.floor(Math.min(width, height) / 40))
+  let totalSamples = 0
+  let closeSamples = 0
+  let sumDistance = 0
+
+  for (let x = 0; x < width; x += edgeStep) {
+    const topIndex = x * 4
+    const bottomIndex = ((height - 1) * width + x) * 4
+    const topColor = [data[topIndex], data[topIndex + 1], data[topIndex + 2]]
+    const bottomColor = [data[bottomIndex], data[bottomIndex + 1], data[bottomIndex + 2]]
+    const topDistance = colorDistance(topColor, background)
+    const bottomDistance = colorDistance(bottomColor, background)
+    sumDistance += topDistance + bottomDistance
+    closeSamples += topDistance <= 18 ? 1 : 0
+    closeSamples += bottomDistance <= 18 ? 1 : 0
+    totalSamples += 2
+  }
+
+  for (let y = 0; y < height; y += edgeStep) {
+    const leftIndex = y * width * 4
+    const rightIndex = (y * width + (width - 1)) * 4
+    const leftColor = [data[leftIndex], data[leftIndex + 1], data[leftIndex + 2]]
+    const rightColor = [data[rightIndex], data[rightIndex + 1], data[rightIndex + 2]]
+    const leftDistance = colorDistance(leftColor, background)
+    const rightDistance = colorDistance(rightColor, background)
+    sumDistance += leftDistance + rightDistance
+    closeSamples += leftDistance <= 18 ? 1 : 0
+    closeSamples += rightDistance <= 18 ? 1 : 0
+    totalSamples += 2
+  }
+
+  const closeRatio = totalSamples > 0 ? closeSamples / totalSamples : 0
+  const averageDistance = totalSamples > 0 ? sumDistance / totalSamples : 999
+
+  return {
+    background,
+    closeRatio,
+    averageDistance,
+    isSimple: closeRatio >= 0.88 && averageDistance <= 16,
+  }
+}
+
 function buildBackgroundMask(data, width, height, background, edgeMap, closeThreshold, farThreshold) {
   const visited = new Uint8Array(width * height)
   const queue = []
+  let queueIndex = 0
   const edgeSeedThreshold = farThreshold + 10
   const neighborThreshold = Number(process.env.SUBJECT_NEIGHBOR_THRESHOLD ?? 26)
   const edgeSoftThreshold = Number(process.env.SUBJECT_EDGE_SOFT_THRESHOLD ?? 14)
@@ -126,8 +254,9 @@ function buildBackgroundMask(data, width, height, background, edgeMap, closeThre
     }
   }
 
-  while (queue.length) {
-    const [x, y] = queue.shift()
+  while (queueIndex < queue.length) {
+    const [x, y] = queue[queueIndex]
+    queueIndex += 1
     const currentIndex = (y * width + x) * 4
     const currentColor = [data[currentIndex], data[currentIndex + 1], data[currentIndex + 2]]
 
@@ -206,10 +335,12 @@ function countForegroundComponents(data, width, height, alphaThreshold = 24) {
       if (alpha <= alphaThreshold) continue
 
       const queue = [[x, y]]
+      let queueIndex = 0
       let pixels = 0
 
-      while (queue.length) {
-        const [currentX, currentY] = queue.shift()
+      while (queueIndex < queue.length) {
+        const [currentX, currentY] = queue[queueIndex]
+        queueIndex += 1
         const currentOffset = currentY * width + currentX
         const currentAlpha = data[currentOffset * 4 + 3]
         if (currentAlpha <= alphaThreshold) continue
@@ -263,9 +394,19 @@ function countForegroundPixels(data, width, height, alphaThreshold = 24) {
   return pixels
 }
 
-function solidifyDominantForeground(data, width, height, alphaThreshold = 48, edgeAlphaThreshold = 20) {
+function solidifyForegroundComponents(
+  data,
+  width,
+  height,
+  {
+    alphaThreshold = 48,
+    edgeAlphaThreshold = 20,
+    maxComponents = 1,
+    minComponentRatio = 0.2,
+  } = {},
+) {
   const visited = new Uint8Array(width * height)
-  let dominantPixels = []
+  const components = []
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -276,10 +417,12 @@ function solidifyDominantForeground(data, width, height, alphaThreshold = 48, ed
       if (data[offset * 4 + 3] <= alphaThreshold) continue
 
       const queue = [[x, y]]
+      let queueIndex = 0
       const component = []
 
-      while (queue.length) {
-        const [currentX, currentY] = queue.shift()
+      while (queueIndex < queue.length) {
+        const [currentX, currentY] = queue[queueIndex]
+        queueIndex += 1
         const currentOffset = currentY * width + currentX
         if (data[currentOffset * 4 + 3] <= alphaThreshold) continue
         component.push(currentOffset)
@@ -306,16 +449,25 @@ function solidifyDominantForeground(data, width, height, alphaThreshold = 48, ed
         }
       }
 
-      if (component.length > dominantPixels.length) {
-        dominantPixels = component
-      }
+      components.push(component)
     }
   }
 
+  if (!components.length) return
+
+  components.sort((a, b) => b.length - a.length)
+  const largestSize = components[0].length
+  const selectedComponents = components
+    .filter((component) => component.length >= Math.max(24, Math.round(largestSize * minComponentRatio)))
+    .slice(0, maxComponents)
+
   const dominantSet = new Uint8Array(width * height)
-  for (const offset of dominantPixels) {
-    dominantSet[offset] = 1
-    data[offset * 4 + 3] = 255
+
+  for (const component of selectedComponents) {
+    for (const offset of component) {
+      dominantSet[offset] = 1
+      data[offset * 4 + 3] = 255
+    }
   }
 
   for (let y = 0; y < height; y += 1) {
@@ -331,7 +483,44 @@ function solidifyDominantForeground(data, width, height, alphaThreshold = 48, ed
   }
 }
 
-function isolateStudioSubject(rawResult, analysisResult = rawResult) {
+async function saveSegmentedBuffer({
+  segmentedBuffer,
+  filePath,
+  quality,
+  padding = 24,
+}) {
+  const image = sharp(segmentedBuffer).ensureAlpha().rotate()
+  const raw = await image.raw().toBuffer({ resolveWithObject: true })
+  const bounds = findSubjectBounds(raw.data, raw.info.width, raw.info.height)
+
+  let output = sharp(raw.data, {
+    raw: {
+      width: raw.info.width,
+      height: raw.info.height,
+      channels: raw.info.channels,
+    },
+  })
+
+  if (bounds) {
+    const left = Math.max(0, bounds.left - padding)
+    const top = Math.max(0, bounds.top - padding)
+    const width = Math.min(raw.info.width - left, bounds.width + padding * 2)
+    const height = Math.min(raw.info.height - top, bounds.height + padding * 2)
+    output = output.extract({ left, top, width, height })
+  }
+
+  await output.webp({
+    quality,
+    effort: 4,
+    alphaQuality: 100,
+  }).toFile(filePath)
+
+  return {
+    hasBounds: Boolean(bounds),
+  }
+}
+
+function isolateStudioSubject(rawResult, analysisResult = rawResult, categoryHint = '') {
   const { data, info } = rawResult
   const analysisData = analysisResult.data
   const { width, height } = info
@@ -367,7 +556,69 @@ function isolateStudioSubject(rawResult, analysisResult = rawResult) {
     }
   }
 
-  solidifyDominantForeground(data, width, height, 56, 56)
+  const profile = getSubjectProfile(categoryHint)
+  solidifyForegroundComponents(data, width, height, {
+    alphaThreshold: 56,
+    edgeAlphaThreshold: 56,
+    maxComponents: profile.maxComponents,
+    minComponentRatio: profile.minComponentRatio,
+  })
+
+  return {
+    data,
+    info,
+    bounds: findSubjectBounds(data, width, height),
+    foregroundPixels: countForegroundPixels(data, width, height),
+    componentCount: countForegroundComponents(data, width, height),
+  }
+}
+
+function isolateSimpleProduct(rawResult, backgroundInfo, categoryHint = '') {
+  const { data, info } = rawResult
+  const { width, height } = info
+  const background = backgroundInfo.background
+  const edgeMap = buildEdgeStrengthMap(data, width, height)
+  const closeThreshold = Number(process.env.SIMPLE_BG_CLOSE_THRESHOLD ?? 14)
+  const farThreshold = Number(process.env.SIMPLE_BG_FAR_THRESHOLD ?? 30)
+  const edgeProtectThreshold = Number(process.env.SIMPLE_EDGE_PROTECT_THRESHOLD ?? 16)
+  const edgeHardThreshold = Number(process.env.SIMPLE_EDGE_HARD_THRESHOLD ?? 28)
+  const highlightProtectThreshold = Number(process.env.SIMPLE_HIGHLIGHT_PROTECT_THRESHOLD ?? 232)
+  const backgroundMask = buildBackgroundMask(data, width, height, background, edgeMap, closeThreshold, farThreshold)
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = y * width + x
+      const index = offset * 4
+      const pixel = [data[index], data[index + 1], data[index + 2]]
+      const distance = colorDistance(pixel, background)
+      const edgeStrength = edgeMap[offset]
+      const brightness = Math.max(pixel[0], pixel[1], pixel[2])
+      const isProtectedHighlight = brightness >= highlightProtectThreshold && edgeStrength >= edgeProtectThreshold
+
+      let alpha = backgroundMask[offset] ? 0 : 255
+      if (!isProtectedHighlight && distance <= closeThreshold) {
+        alpha = 0
+      } else if (!isProtectedHighlight && distance < farThreshold) {
+        alpha = clampChannel(((distance - closeThreshold) / Math.max(1, farThreshold - closeThreshold)) * 255)
+      }
+
+      if (isProtectedHighlight || edgeStrength >= edgeHardThreshold) {
+        alpha = Math.max(alpha, 255)
+      } else if (edgeStrength >= edgeProtectThreshold) {
+        alpha = Math.max(alpha, 232)
+      }
+
+      data[index + 3] = alpha
+    }
+  }
+
+  const profile = getSubjectProfile(categoryHint)
+  solidifyForegroundComponents(data, width, height, {
+    alphaThreshold: 42,
+    edgeAlphaThreshold: 28,
+    maxComponents: profile.maxComponents,
+    minComponentRatio: profile.minComponentRatio,
+  })
 
   return {
     data,
@@ -418,6 +669,7 @@ export async function processAndSaveImage({
   phone,
   uploadsDir,
   processingMode = 'standard',
+  categoryHint = '',
 }) {
   if (!dataUrl.startsWith('data:image/')) {
     throw new Error('Please upload a valid image.')
@@ -432,6 +684,8 @@ export async function processAndSaveImage({
   const originalBuffer = Buffer.from(base64, 'base64')
   const fileName = `${phone}-${Date.now()}-${crypto.randomUUID()}.webp`
   const filePath = path.join(uploadsDir, fileName)
+  const sourceFileName = `${phone}-${Date.now()}-${crypto.randomUUID()}-source.webp`
+  const sourceFilePath = path.join(uploadsDir, sourceFileName)
   const quality = Number(process.env.IMAGE_QUALITY ?? 82)
   const baseImage = sharp(originalBuffer).rotate().resize({
     width: 1200,
@@ -439,33 +693,131 @@ export async function processAndSaveImage({
     fit: 'inside',
     withoutEnlargement: true,
   })
+  await baseImage
+    .clone()
+    .webp({
+      quality,
+      effort: 4,
+    })
+    .toFile(sourceFilePath)
 
   if (processingMode === 'subject') {
+    const normalizedCategory = String(categoryHint).trim().toLowerCase()
+    const profile = getSubjectProfile(normalizedCategory)
+    const allowLegacyFallback = shouldAllowLegacySubjectFallback()
+
+    if (hasAliyunSegmentationCredentials()) {
+      try {
+        const segmented = await segmentProductImageWithAliyun({
+          buffer: originalBuffer,
+          categoryHint: normalizedCategory,
+        })
+
+        const saved = await saveSegmentedBuffer({
+          segmentedBuffer: segmented.buffer,
+          filePath,
+          quality,
+          padding: profile.padding,
+        })
+
+        return {
+          imageUrl: `/uploads/${fileName}`,
+          sourceImageUrl: `/uploads/${sourceFileName}`,
+          processingMode,
+          subjectStats: {
+            extracted: saved.hasBounds,
+            componentCount: 1,
+            method: 'cloud_cutout',
+            pipeline: 'cloud_segmentation',
+            simpleBackdrop: false,
+          },
+        }
+      } catch (error) {
+        if (!allowLegacyFallback) {
+          const segmentationError = classifyAliyunSegmentationError(error)
+          await saveOriginalImageToFile({ image: baseImage, filePath, quality })
+          return {
+            imageUrl: `/uploads/${fileName}`,
+            sourceImageUrl: `/uploads/${sourceFileName}`,
+            processingMode,
+            subjectStats: {
+              extracted: false,
+              componentCount: 0,
+              method: 'fallback_original',
+              pipeline: 'cloud_required',
+              simpleBackdrop: false,
+              failureCode: segmentationError.code,
+              failureMessage: segmentationError.message,
+            },
+          }
+        }
+      }
+    } else if (!allowLegacyFallback) {
+      await saveOriginalImageToFile({ image: baseImage, filePath, quality })
+      return {
+        imageUrl: `/uploads/${fileName}`,
+        sourceImageUrl: `/uploads/${sourceFileName}`,
+        processingMode,
+        subjectStats: {
+          extracted: false,
+          componentCount: 0,
+          method: 'fallback_original',
+          pipeline: 'cloud_required',
+          simpleBackdrop: false,
+          failureCode: 'missing_credentials',
+          failureMessage: '还没有配置阿里云图像分割凭证，当前先保留原图。',
+        },
+      }
+    }
+
     let workingImage = baseImage
     let subjectMethod = 'local'
+    let pipeline = 'direct_cutout'
 
-    try {
-      const aiEnhanced = await enhanceGarmentImageWithAi(dataUrl)
-      if (aiEnhanced?.buffer) {
-        workingImage = sharp(aiEnhanced.buffer).rotate().resize({
-          width: 1200,
-          height: 1200,
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
-        subjectMethod = 'ai'
+    const originalRawResult = await baseImage.clone().ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    const simpleBackdrop = assessBackdropSimplicity(
+      originalRawResult.data,
+      originalRawResult.info.width,
+      originalRawResult.info.height,
+    )
+
+    if (!simpleBackdrop.isSimple) {
+      try {
+        const aiEnhanced = await enhanceGarmentImageWithAi(dataUrl, categoryHint)
+        if (aiEnhanced?.buffer) {
+          workingImage = sharp(aiEnhanced.buffer).rotate().resize({
+            width: 1200,
+            height: 1200,
+            fit: 'inside',
+            withoutEnlargement: true,
+          })
+          subjectMethod = 'ai'
+          pipeline = 'ai_cleanup'
+        }
+      } catch {
+        subjectMethod = 'local'
+        pipeline = 'assisted_cutout'
       }
-    } catch {
-      subjectMethod = 'local'
+    } else {
+      pipeline = 'direct_cutout'
     }
 
     const rawResult = await workingImage.clone().ensureAlpha().raw().toBuffer({ resolveWithObject: true })
     const analysisResult = await workingImage.clone().blur(1.4).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-    const isolated = subjectMethod === 'ai' ? isolateStudioSubject(rawResult, analysisResult) : isolateSubject(rawResult, analysisResult)
+    const isolated =
+      simpleBackdrop.isSimple && subjectMethod === 'local'
+        ? isolateSimpleProduct(rawResult, simpleBackdrop, normalizedCategory)
+        : subjectMethod === 'ai'
+        ? isolateStudioSubject(rawResult, analysisResult, normalizedCategory)
+        : isolateSubject(rawResult, analysisResult)
     const minForegroundRatio = Number(process.env.SUBJECT_MIN_FOREGROUND_RATIO ?? 0.015)
     const minBoundsAreaRatio = Number(process.env.SUBJECT_MIN_BOUNDS_AREA_RATIO ?? 0.03)
     const minForegroundDensity =
-      Number(subjectMethod === 'ai' ? process.env.STUDIO_MIN_FOREGROUND_DENSITY ?? 0.12 : process.env.SUBJECT_MIN_FOREGROUND_DENSITY ?? 0.22)
+      Number(
+        subjectMethod === 'ai'
+          ? process.env.STUDIO_MIN_FOREGROUND_DENSITY ?? profile.minForegroundDensityAi
+          : process.env.SUBJECT_MIN_FOREGROUND_DENSITY ?? profile.minForegroundDensityLocal,
+      )
     const imageArea = isolated.info.width * isolated.info.height
     const foregroundRatio = imageArea > 0 ? isolated.foregroundPixels / imageArea : 0
     const boundsArea =
@@ -488,7 +840,7 @@ export async function processAndSaveImage({
     })
 
     if (extractionLooksValid && isolated.bounds) {
-      const padding = Number(process.env.SUBJECT_PADDING ?? 24)
+      const padding = Number(process.env.SUBJECT_PADDING ?? profile.padding)
       const left = Math.max(0, isolated.bounds.left - padding)
       const top = Math.max(0, isolated.bounds.top - padding)
       const width = Math.min(isolated.info.width - left, isolated.bounds.width + padding * 2)
@@ -516,11 +868,14 @@ export async function processAndSaveImage({
 
     return {
       imageUrl: `/uploads/${fileName}`,
+      sourceImageUrl: `/uploads/${sourceFileName}`,
       processingMode,
       subjectStats: {
         extracted: extractionLooksValid,
         componentCount: isolated.componentCount,
         method: extractionLooksValid ? (subjectMethod === 'ai' ? 'ai_cutout' : 'local_cutout') : subjectMethod === 'ai' ? 'ai_studio_fallback' : 'fallback_original',
+        pipeline: extractionLooksValid ? pipeline : 'fallback_original',
+        simpleBackdrop: simpleBackdrop.isSimple,
       },
     }
   } else {
@@ -534,6 +889,7 @@ export async function processAndSaveImage({
 
   return {
     imageUrl: `/uploads/${fileName}`,
+    sourceImageUrl: `/uploads/${sourceFileName}`,
     processingMode,
     subjectStats: {
       extracted: false,
@@ -547,13 +903,35 @@ export async function saveGeneratedImageDataUrl({
   phone,
   uploadsDir,
 }) {
-  const result = await processAndSaveImage({
-    dataUrl,
-    phone,
-    uploadsDir,
-    processingMode: 'standard',
-  })
-  return result.imageUrl
+  if (!dataUrl.startsWith('data:image/')) {
+    throw new Error('Please upload a valid image.')
+  }
+
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
+  if (!match) {
+    throw new Error('Unsupported image format.')
+  }
+
+  const base64 = match[2]
+  const originalBuffer = Buffer.from(base64, 'base64')
+  const fileName = `${phone}-${Date.now()}-${crypto.randomUUID()}.webp`
+  const filePath = path.join(uploadsDir, fileName)
+
+  await sharp(originalBuffer)
+    .rotate()
+    .resize({
+      width: 1600,
+      height: 1600,
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
+    .webp({
+      quality: Number(process.env.GENERATED_IMAGE_QUALITY ?? 92),
+      effort: 4,
+    })
+    .toFile(filePath)
+
+  return `/uploads/${fileName}`
 }
 
 export async function removeUploadedFile(uploadsDir, imageUrl) {

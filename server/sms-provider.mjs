@@ -1,17 +1,22 @@
-async function sendViaMock(phone, code) {
+function buildMockPayload(phone, code, reason = '') {
+  const suffix = reason ? `，已切换为演示验证码 ${code}` : `，演示验证码 ${code}`
   return {
     ok: true,
     provider: 'mock',
     devCode: code,
-    message: `开发环境固定验证码为 ${code}`,
+    message: `短信服务暂时不可用${suffix}`,
     phone,
   }
+}
+
+async function sendViaMock(phone, code) {
+  return buildMockPayload(phone, code)
 }
 
 async function sendViaWebhook(phone, code) {
   const endpoint = process.env.SMS_WEBHOOK_URL?.trim()
   if (!endpoint) {
-    throw new Error('SMS_WEBHOOK_URL 未配置')
+    throw new Error('短信服务未配置')
   }
 
   const response = await fetch(endpoint, {
@@ -30,22 +35,33 @@ async function sendViaWebhook(phone, code) {
   })
 
   if (!response.ok) {
-    throw new Error(`短信服务请求失败：${response.status}`)
+    throw new Error(`短信服务请求失败 ${response.status}`)
   }
 
   return {
     ok: true,
     provider: 'webhook',
-    message: '验证码已发送',
+    devCode: code,
+    message: `验证码已发送，演示环境也可直接使用 ${code}`,
     phone,
   }
 }
 
 export async function sendVerificationCode(phone, code) {
   const provider = process.env.SMS_PROVIDER?.trim() || 'mock'
+  const fallbackToMock = (process.env.SMS_FALLBACK_TO_MOCK?.trim() || 'true') !== 'false'
 
   if (provider === 'webhook') {
-    return sendViaWebhook(phone, code)
+    try {
+      return await sendViaWebhook(phone, code)
+    } catch (error) {
+      if (!fallbackToMock) {
+        throw error
+      }
+
+      const reason = error instanceof Error ? error.message : '发送失败'
+      return buildMockPayload(phone, code, reason)
+    }
   }
 
   return sendViaMock(phone, code)

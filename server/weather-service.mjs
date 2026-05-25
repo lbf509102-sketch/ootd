@@ -1,53 +1,56 @@
 export const cityOptions = [
   {
-    city: '上海',
-    latitude: 31.2222,
-    longitude: 121.4581,
+    city: '嘉兴',
+    latitude: 30.7462,
+    longitude: 120.7555,
     fallbackWeather: {
-      city: '上海',
-      temperature: 24,
-      feelsLike: 23,
+      city: '嘉兴',
+      temperature: 25,
+      feelsLike: 26,
       weatherType: 'cloudy',
       windLevel: 'medium',
-      humidity: 66,
-      uvLevel: 'high',
-      tempGap: 7,
-      rainProbability: 25,
-    },
-  },
-  {
-    city: '北京',
-    latitude: 39.9042,
-    longitude: 116.4074,
-    fallbackWeather: {
-      city: '北京',
-      temperature: 28,
-      feelsLike: 29,
-      weatherType: 'sunny',
-      windLevel: 'low',
-      humidity: 42,
-      uvLevel: 'high',
-      tempGap: 9,
-      rainProbability: 5,
-    },
-  },
-  {
-    city: '广州',
-    latitude: 23.1291,
-    longitude: 113.2644,
-    fallbackWeather: {
-      city: '广州',
-      temperature: 31,
-      feelsLike: 34,
-      weatherType: 'rainy',
-      windLevel: 'medium',
-      humidity: 84,
+      humidity: 72,
       uvLevel: 'medium',
-      tempGap: 4,
-      rainProbability: 72,
+      tempGap: 7,
+      rainProbability: 30,
+    },
+  },
+  {
+    city: '宁波',
+    latitude: 29.8683,
+    longitude: 121.544,
+    fallbackWeather: {
+      city: '宁波',
+      temperature: 26,
+      feelsLike: 28,
+      weatherType: 'cloudy',
+      windLevel: 'medium',
+      humidity: 76,
+      uvLevel: 'medium',
+      tempGap: 6,
+      rainProbability: 35,
+    },
+  },
+  {
+    city: '嵊州新昌',
+    latitude: 29.54,
+    longitude: 120.86,
+    fallbackWeather: {
+      city: '嵊州新昌',
+      temperature: 25,
+      feelsLike: 27,
+      weatherType: 'cloudy',
+      windLevel: 'low',
+      humidity: 74,
+      uvLevel: 'medium',
+      tempGap: 6,
+      rainProbability: 28,
     },
   },
 ]
+
+const weatherCache = new Map()
+const weatherCacheTtlMs = 10 * 60 * 1000
 
 function mapWeatherType(code) {
   if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code)) return 'rainy'
@@ -70,6 +73,10 @@ function mapUvLevel(value) {
 
 export async function fetchCityWeather(cityName) {
   const city = cityOptions.find((option) => option.city === cityName) ?? cityOptions[0]
+  const cached = weatherCache.get(city.city)
+  if (cached && Date.now() - cached.updatedAt < weatherCacheTtlMs) {
+    return cached.weather
+  }
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${city.latitude}` +
     `&longitude=${city.longitude}` +
@@ -82,7 +89,7 @@ export async function fetchCityWeather(cityName) {
     if (!response.ok) throw new Error(`Weather request failed: ${response.status}`)
 
     const data = await response.json()
-    return {
+    const weather = {
       city: city.city,
       temperature: Math.round(data.current.temperature_2m),
       feelsLike: Math.round(data.current.apparent_temperature),
@@ -96,6 +103,8 @@ export async function fetchCityWeather(cityName) {
       ),
       rainProbability: Math.round(data.daily.precipitation_probability_max[0] ?? 0),
     }
+    weatherCache.set(city.city, { weather, updatedAt: Date.now() })
+    return weather
   } catch {
     return city.fallbackWeather
   }

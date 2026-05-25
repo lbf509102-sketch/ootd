@@ -49,6 +49,54 @@ export const cityOptions: CityOption[] = [
       rainProbability: 72,
     },
   },
+  {
+    city: '嘉兴',
+    latitude: 30.7462,
+    longitude: 120.7555,
+    fallbackWeather: {
+      city: '嘉兴',
+      temperature: 25,
+      feelsLike: 26,
+      weatherType: 'cloudy',
+      windLevel: 'medium',
+      humidity: 72,
+      uvLevel: 'medium',
+      tempGap: 7,
+      rainProbability: 30,
+    },
+  },
+  {
+    city: '宁波',
+    latitude: 29.8683,
+    longitude: 121.544,
+    fallbackWeather: {
+      city: '宁波',
+      temperature: 26,
+      feelsLike: 28,
+      weatherType: 'cloudy',
+      windLevel: 'medium',
+      humidity: 76,
+      uvLevel: 'medium',
+      tempGap: 6,
+      rainProbability: 35,
+    },
+  },
+  {
+    city: '嵊州新昌',
+    latitude: 29.54,
+    longitude: 120.86,
+    fallbackWeather: {
+      city: '嵊州新昌',
+      temperature: 25,
+      feelsLike: 27,
+      weatherType: 'cloudy',
+      windLevel: 'low',
+      humidity: 74,
+      uvLevel: 'medium',
+      tempGap: 6,
+      rainProbability: 28,
+    },
+  },
 ]
 
 export const initialPreferences: UserPreferences = {
@@ -271,7 +319,7 @@ export const initialWardrobe: WardrobeItem[] = [
   },
   {
     id: 'item-14',
-    name: '焦糖肩背包',
+    name: '焦糖腋下包',
     category: 'accessory',
     colorGroup: 'khaki_brown',
     thickness: 'regular',

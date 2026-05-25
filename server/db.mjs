@@ -9,6 +9,7 @@ const dbPath = process.env.DATABASE_PATH
   ? path.resolve(process.env.DATABASE_PATH)
   : path.join(dataDir, 'app.db')
 const legacyJsonPath = path.join(dataDir, 'app-data.json')
+const validCities = new Set(['\u5609\u5174', '\u5b81\u6ce2', '\u5d4a\u5dde\u65b0\u660c'])
 
 mkdirSync(dataDir, { recursive: true })
 
@@ -18,6 +19,25 @@ function ensureColumn(tableName, columnName, definition) {
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all()
   if (columns.some((column) => column.name === columnName)) return
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`)
+}
+
+function normalizeSelectedCity(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return '嘉兴'
+  if (validCities.has(raw)) return raw
+
+  switch (raw) {
+    case '上海':
+    case '北京':
+    case '广州':
+    case '??':
+    case '?????':
+    case '?????':
+    case '?????':
+      return '嘉兴'
+    default:
+      return '嘉兴'
+  }
 }
 
 db.exec(`
@@ -71,6 +91,7 @@ db.exec(`
     silhouette TEXT,
     preference_score INTEGER NOT NULL,
     wear_count INTEGER NOT NULL,
+    created_at TEXT,
     last_worn_at TEXT,
     is_disliked INTEGER NOT NULL,
     image_url TEXT,
@@ -106,6 +127,7 @@ db.exec(`
     person_image_url TEXT NOT NULL,
     garment_image_url TEXT NOT NULL,
     result_image_url TEXT,
+    base_result_image_url TEXT,
     provider TEXT,
     status TEXT NOT NULL,
     note TEXT NOT NULL,
@@ -118,9 +140,24 @@ db.exec(`
 ensureColumn('wardrobe_items', 'garment_length', 'TEXT')
 ensureColumn('wardrobe_items', 'sleeve_length', 'TEXT')
 ensureColumn('wardrobe_items', 'silhouette', 'TEXT')
+ensureColumn('wardrobe_items', 'display_image_url', 'TEXT')
+ensureColumn('wardrobe_items', 'source_image_url', 'TEXT')
+ensureColumn('wardrobe_items', 'created_at', 'TEXT')
 ensureColumn('avatar_profiles', 'try_on_photo_url', 'TEXT')
 ensureColumn('try_on_sessions', 'result_image_url', 'TEXT')
+ensureColumn('try_on_sessions', 'base_result_image_url', 'TEXT')
 ensureColumn('try_on_sessions', 'provider', 'TEXT')
+ensureColumn('try_on_sessions', 'look_key', 'TEXT')
+db.exec(`
+  UPDATE users
+  SET selected_city = CASE selected_city
+    WHEN '??' THEN '上海'
+    WHEN '涓婃捣' THEN '上海'
+    WHEN '鍖椾含' THEN '北京'
+    WHEN '骞垮窞' THEN '广州'
+    ELSE selected_city
+  END
+`)
 
 function normalizeLegacyData(raw) {
   if (raw.users) return raw
@@ -130,7 +167,7 @@ function normalizeLegacyData(raw) {
         phone: '13800138000',
         nickname: '默认用户',
         data: {
-          selectedCity: raw.selectedCity ?? '上海',
+          selectedCity: raw.selectedCity ?? '\u5609\u5174',
           preferences: raw.preferences,
           wardrobe: raw.wardrobe,
         },
@@ -364,12 +401,19 @@ function inferGarmentMeta(item) {
 
 function normalizeWardrobeItem(item) {
   const inferred = inferGarmentMeta(item)
+  const displayImageUrl = item.displayImageUrl ?? item.imageUrl ?? null
+  const sourceImageUrl = item.sourceImageUrl ?? item.imageUrl ?? displayImageUrl ?? null
+  const createdAt = typeof item.createdAt === 'string' && item.createdAt.trim() ? item.createdAt : null
   return {
     ...item,
     isDisliked: Boolean(item.isDisliked),
     garmentLength: item.garmentLength ?? inferred.garmentLength,
     sleeveLength: item.sleeveLength ?? inferred.sleeveLength,
     silhouette: item.silhouette ?? inferred.silhouette,
+    createdAt,
+    imageUrl: displayImageUrl,
+    displayImageUrl,
+    sourceImageUrl,
   }
 }
 
@@ -384,7 +428,7 @@ function seedFromLegacyOrDefault() {
         phone: '13800138000',
         nickname: '默认用户',
         data: {
-          selectedCity: '上海',
+          selectedCity: '\u5609\u5174',
           preferences: {
             preferredStyles: ['commute', 'refined'],
             avoidCategories: [],
@@ -468,14 +512,16 @@ const deleteWardrobeStmt = db.prepare('DELETE FROM wardrobe_items WHERE phone = 
 const insertWardrobeStmt = db.prepare(
   `INSERT INTO wardrobe_items (
     id, phone, name, category, color_group, thickness, style, status,
-    season_fit, fit_type, garment_length, sleeve_length, silhouette, preference_score, wear_count, last_worn_at, is_disliked, image_url
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    season_fit, fit_type, garment_length, sleeve_length, silhouette, preference_score, wear_count, created_at, last_worn_at, is_disliked,
+    image_url, display_image_url, source_image_url
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 )
 const getWardrobeStmt = db.prepare(
   `SELECT id, name, category, color_group AS colorGroup, thickness, style, status,
           season_fit AS seasonFit, fit_type AS fitType, garment_length AS garmentLength,
           sleeve_length AS sleeveLength, silhouette, preference_score AS preferenceScore,
-          wear_count AS wearCount, last_worn_at AS lastWornAt, is_disliked AS isDisliked, image_url AS imageUrl
+          wear_count AS wearCount, created_at AS createdAt, last_worn_at AS lastWornAt, is_disliked AS isDisliked,
+          image_url AS imageUrl, display_image_url AS displayImageUrl, source_image_url AS sourceImageUrl
    FROM wardrobe_items WHERE phone = ?
    ORDER BY rowid DESC`,
 )
@@ -483,7 +529,8 @@ const getWardrobeItemStmt = db.prepare(
   `SELECT id, name, category, color_group AS colorGroup, thickness, style, status,
           season_fit AS seasonFit, fit_type AS fitType, garment_length AS garmentLength,
           sleeve_length AS sleeveLength, silhouette, preference_score AS preferenceScore,
-          wear_count AS wearCount, last_worn_at AS lastWornAt, is_disliked AS isDisliked, image_url AS imageUrl
+          wear_count AS wearCount, created_at AS createdAt, last_worn_at AS lastWornAt, is_disliked AS isDisliked,
+          image_url AS imageUrl, display_image_url AS displayImageUrl, source_image_url AS sourceImageUrl
    FROM wardrobe_items WHERE phone = ? AND id = ?`,
 )
 const updateCityStmt = db.prepare('UPDATE users SET selected_city = ? WHERE phone = ?')
@@ -503,7 +550,10 @@ const updateWardrobeItemStmt = db.prepare(
        garment_length = ?,
        sleeve_length = ?,
        silhouette = ?,
-       image_url = ?
+       created_at = ?,
+       image_url = ?,
+       display_image_url = ?,
+       source_image_url = ?
    WHERE phone = ? AND id = ?`,
 )
 const deleteWardrobeItemStmt = db.prepare('DELETE FROM wardrobe_items WHERE phone = ? AND id = ?')
@@ -541,16 +591,18 @@ const deleteSavedLookStmt = db.prepare(
 )
 const insertTryOnSessionStmt = db.prepare(
   `INSERT INTO try_on_sessions (
-    id, phone, garment_item_id, person_image_url, garment_image_url, result_image_url, provider, status, note, created_at, updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id, phone, garment_item_id, look_key, person_image_url, garment_image_url, result_image_url, base_result_image_url, provider, status, note, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 )
 const getTryOnSessionsStmt = db.prepare(
   `SELECT
       id,
       garment_item_id AS garmentItemId,
+      look_key AS lookKey,
       person_image_url AS personImageUrl,
       garment_image_url AS garmentImageUrl,
       result_image_url AS resultImageUrl,
+      base_result_image_url AS baseResultImageUrl,
       provider,
       status,
       note,
@@ -564,9 +616,11 @@ const getTryOnSessionStmt = db.prepare(
   `SELECT
       id,
       garment_item_id AS garmentItemId,
+      look_key AS lookKey,
       person_image_url AS personImageUrl,
       garment_image_url AS garmentImageUrl,
       result_image_url AS resultImageUrl,
+      base_result_image_url AS baseResultImageUrl,
       provider,
       status,
       note,
@@ -575,9 +629,32 @@ const getTryOnSessionStmt = db.prepare(
    FROM try_on_sessions
    WHERE phone = ? AND id = ?`,
 )
+const getReusableTryOnSessionStmt = db.prepare(
+  `SELECT
+      id,
+      garment_item_id AS garmentItemId,
+      look_key AS lookKey,
+      person_image_url AS personImageUrl,
+      garment_image_url AS garmentImageUrl,
+      result_image_url AS resultImageUrl,
+      base_result_image_url AS baseResultImageUrl,
+      provider,
+      status,
+      note,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+   FROM try_on_sessions
+   WHERE phone = ?
+     AND garment_item_id = ?
+     AND person_image_url = ?
+     AND garment_image_url = ?
+   ORDER BY updated_at DESC
+   LIMIT 1`,
+)
 const updateTryOnSessionStmt = db.prepare(
   `UPDATE try_on_sessions
    SET result_image_url = ?,
+       base_result_image_url = ?,
        provider = ?,
        status = ?,
        note = ?,
@@ -605,16 +682,21 @@ function rowToPreferences(row) {
   }
 }
 
-export function insertUserRecord(phone, nickname, selectedCity = '上海') {
-  insertUserStmt.run(phone, nickname, selectedCity)
+export function insertUserRecord(phone, nickname, selectedCity = '\u5609\u5174') {
+  insertUserStmt.run(phone, nickname, normalizeSelectedCity(selectedCity))
 }
 
-export function upsertUser(phone, nickname, selectedCity = '上海') {
-  upsertUserStmt.run(phone, nickname, selectedCity)
+export function upsertUser(phone, nickname, selectedCity = '\u5609\u5174') {
+  upsertUserStmt.run(phone, nickname, normalizeSelectedCity(selectedCity))
 }
 
 export function getUser(phone) {
-  return getUserStmt.get(phone) ?? null
+  const user = getUserStmt.get(phone) ?? null
+  if (!user) return null
+  return {
+    ...user,
+    selectedCity: normalizeSelectedCity(user.selectedCity),
+  }
 }
 
 export function getUserBundle(phone) {
@@ -697,9 +779,12 @@ export function replaceWardrobe(phone, wardrobe) {
         normalized.silhouette,
         normalized.preferenceScore,
         normalized.wearCount,
+        normalized.createdAt ?? null,
         normalized.lastWornAt ?? null,
         normalized.isDisliked ? 1 : 0,
         normalized.imageUrl ?? null,
+        normalized.displayImageUrl ?? null,
+        normalized.sourceImageUrl ?? null,
       )
     }
     db.exec('COMMIT')
@@ -727,9 +812,12 @@ export function addWardrobeItem(phone, item) {
     normalized.silhouette,
     normalized.preferenceScore,
     normalized.wearCount,
+    normalized.createdAt ?? new Date().toISOString(),
     normalized.lastWornAt ?? null,
     normalized.isDisliked ? 1 : 0,
     normalized.imageUrl ?? null,
+    normalized.displayImageUrl ?? null,
+    normalized.sourceImageUrl ?? null,
   )
 }
 
@@ -739,7 +827,7 @@ export function getWardrobeItem(phone, id) {
 }
 
 export function updateSelectedCity(phone, city) {
-  updateCityStmt.run(city, phone)
+  updateCityStmt.run(normalizeSelectedCity(city), phone)
 }
 
 export function updateWardrobeStatus(phone, id, status) {
@@ -760,7 +848,10 @@ export function updateWardrobeItem(phone, item) {
     normalized.garmentLength,
     normalized.sleeveLength,
     normalized.silhouette,
+    normalized.createdAt ?? null,
     normalized.imageUrl ?? null,
+    normalized.displayImageUrl ?? null,
+    normalized.sourceImageUrl ?? null,
     phone,
     normalized.id,
   )
@@ -838,9 +929,11 @@ export function addTryOnSession(phone, payload) {
     id,
     phone,
     payload.garmentItemId,
+    payload.lookKey ?? null,
     payload.personImageUrl,
     payload.garmentImageUrl,
     payload.resultImageUrl ?? null,
+    payload.baseResultImageUrl ?? null,
     payload.provider ?? null,
     payload.status,
     payload.note,
@@ -850,9 +943,11 @@ export function addTryOnSession(phone, payload) {
   return {
     id,
     garmentItemId: payload.garmentItemId,
+    lookKey: payload.lookKey ?? null,
     personImageUrl: payload.personImageUrl,
     garmentImageUrl: payload.garmentImageUrl,
     resultImageUrl: payload.resultImageUrl ?? null,
+    baseResultImageUrl: payload.baseResultImageUrl ?? null,
     provider: payload.provider ?? null,
     status: payload.status,
     note: payload.note,
@@ -869,10 +964,15 @@ export function getTryOnSession(phone, id) {
   return getTryOnSessionStmt.get(phone, id) ?? null
 }
 
+export function findReusableTryOnSession(phone, garmentItemId, personImageUrl, garmentImageUrl) {
+  return getReusableTryOnSessionStmt.get(phone, garmentItemId, personImageUrl, garmentImageUrl) ?? null
+}
+
 export function updateTryOnSession(phone, id, payload) {
   const now = new Date().toISOString()
   updateTryOnSessionStmt.run(
     payload.resultImageUrl ?? null,
+    payload.baseResultImageUrl ?? null,
     payload.provider ?? null,
     payload.status,
     payload.note,

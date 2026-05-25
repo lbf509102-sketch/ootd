@@ -65,6 +65,59 @@ function inferVisualMeta(category, fitType) {
   return { garmentLength: 'short', sleeveLength: 'na', silhouette: 'straight' }
 }
 
+function normalizeGarmentDraft(parsed, provider) {
+  const confidence = Number(parsed?.confidence ?? 0)
+  const category = sanitizeEnum(parsed?.category, allowedCategories, 'top')
+  const colorGroup = sanitizeEnum(parsed?.colorGroup, allowedColors, 'black_white_gray')
+  const fitType = sanitizeEnum(parsed?.fitType, allowedFitTypes, 'regular')
+  const inferredMeta = inferVisualMeta(category, fitType)
+  const normalizedName =
+    typeof parsed?.name === 'string' && parsed.name.trim() && !containsMostlyLatin(parsed.name)
+      ? parsed.name.trim()
+      : buildChineseName(category, colorGroup)
+  const normalizedNote =
+    typeof parsed?.note === 'string' && parsed.note.trim() && !containsMostlyLatin(parsed.note)
+      ? parsed.note.trim()
+      : `识别为${categoryNames[category]}，保存前请确认领口、长度和面料细节。`
+
+  return {
+    provider,
+    category,
+    colorGroup,
+    thickness: sanitizeEnum(parsed?.thickness, allowedThickness, 'regular'),
+    style: sanitizeEnum(parsed?.style, allowedStyles, 'commute'),
+    seasonFit: sanitizeEnum(parsed?.seasonFit, allowedSeasons, 'spring_autumn'),
+    fitType,
+    garmentLength: sanitizeEnum(parsed?.garmentLength, allowedGarmentLengths, inferredMeta.garmentLength),
+    sleeveLength: sanitizeEnum(parsed?.sleeveLength, allowedSleeveLengths, inferredMeta.sleeveLength),
+    silhouette: sanitizeEnum(parsed?.silhouette, allowedSilhouettes, inferredMeta.silhouette),
+    name: normalizedName,
+    note: normalizedNote,
+    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
+  }
+}
+
+async function resolveVisionConfig() {
+  const apiKey = process.env.DASHSCOPE_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim()
+  if (!apiKey) return null
+
+  const model = process.env.GARMENT_VISION_MODEL?.trim() || 'qwen3.6-plus'
+  const baseUrl =
+    process.env.GARMENT_AI_BASE_URL?.trim() ||
+    (process.env.DASHSCOPE_API_KEY?.trim()
+      ? 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+      : 'https://api.openai.com/v1')
+  const isDashScope = /dashscope\.aliyuncs\.com/i.test(baseUrl)
+
+  return {
+    apiKey,
+    model,
+    baseUrl,
+    isDashScope,
+    provider: isDashScope ? 'qwen' : 'openai',
+  }
+}
+
 async function normalizeImageDataUrl(dataUrl) {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
   if (!match) return dataUrl
@@ -85,17 +138,10 @@ async function normalizeImageDataUrl(dataUrl) {
 }
 
 export async function classifyGarmentImage(dataUrl) {
-  const apiKey = process.env.DASHSCOPE_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim()
-  if (!apiKey || !dataUrl.startsWith('data:image/')) return null
+  const config = await resolveVisionConfig()
+  if (!config || !dataUrl.startsWith('data:image/')) return null
 
-  const model = process.env.GARMENT_VISION_MODEL?.trim() || 'qwen3.6-plus'
-  const baseUrl =
-    process.env.GARMENT_AI_BASE_URL?.trim() ||
-    (process.env.DASHSCOPE_API_KEY?.trim()
-      ? 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-      : 'https://api.openai.com/v1')
-  const isDashScope = /dashscope\.aliyuncs\.com/i.test(baseUrl)
-  const imagePayload = isDashScope ? await normalizeImageDataUrl(dataUrl) : dataUrl
+  const imagePayload = config.isDashScope ? await normalizeImageDataUrl(dataUrl) : dataUrl
   const prompt =
     '你在为一个中文衣橱应用识别单件服装图片。只返回 JSON，不要返回代码块、解释或额外文字。' +
     'JSON 必须只包含这些键：category, colorGroup, thickness, style, seasonFit, fitType, garmentLength, sleeveLength, silhouette, name, note, confidence。' +
@@ -115,9 +161,9 @@ export async function classifyGarmentImage(dataUrl) {
     'note 只写一句简短中文说明。' +
     '如果图片不是单件清晰服装，confidence 必须低于 0.55，并在 note 里用中文简要说明原因。'
 
-  const requestBody = isDashScope
+  const requestBody = config.isDashScope
     ? {
-        model,
+        model: config.model,
         messages: [
           {
             role: 'user',
@@ -130,7 +176,7 @@ export async function classifyGarmentImage(dataUrl) {
         max_tokens: 400,
       }
     : {
-        model,
+        model: config.model,
         input: [
           {
             role: 'user',
@@ -143,11 +189,11 @@ export async function classifyGarmentImage(dataUrl) {
         max_output_tokens: 400,
       }
 
-  const endpoint = `${baseUrl.replace(/\/$/, '')}/${isDashScope ? 'chat/completions' : 'responses'}`
+  const endpoint = `${config.baseUrl.replace(/\/$/, '')}/${config.isDashScope ? 'chat/completions' : 'responses'}`
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(requestBody),
@@ -159,7 +205,7 @@ export async function classifyGarmentImage(dataUrl) {
   }
 
   const payload = await response.json()
-  const outputText = isDashScope
+  const outputText = config.isDashScope
     ? payload.choices?.[0]?.message?.content ?? ''
     : payload.output_text ||
       payload.output?.flatMap((entry) => entry.content ?? []).map((entry) => entry.text ?? '').join('\n') ||
@@ -167,35 +213,111 @@ export async function classifyGarmentImage(dataUrl) {
   const jsonText = extractJsonBlock(outputText)
   if (!jsonText) return null
 
-  const parsed = JSON.parse(jsonText)
-  const confidence = Number(parsed.confidence ?? 0)
-  const category = sanitizeEnum(parsed.category, allowedCategories, 'top')
-  const colorGroup = sanitizeEnum(parsed.colorGroup, allowedColors, 'black_white_gray')
-  const fitType = sanitizeEnum(parsed.fitType, allowedFitTypes, 'regular')
-  const inferredMeta = inferVisualMeta(category, fitType)
-  const normalizedName =
-    typeof parsed.name === 'string' && parsed.name.trim() && !containsMostlyLatin(parsed.name)
-      ? parsed.name.trim()
-      : buildChineseName(category, colorGroup)
-  const normalizedNote =
-    typeof parsed.note === 'string' && parsed.note.trim() && !containsMostlyLatin(parsed.note)
-      ? parsed.note.trim()
-      : `识别为${categoryNames[category]}，保存前请确认领口、长度和面料细节。`
+  return normalizeGarmentDraft(JSON.parse(jsonText), config.provider)
+}
 
-  return {
-    provider: isDashScope ? 'qwen' : 'openai',
-    category,
-    colorGroup,
-    thickness: sanitizeEnum(parsed.thickness, allowedThickness, 'regular'),
-    style: sanitizeEnum(parsed.style, allowedStyles, 'commute'),
-    seasonFit: sanitizeEnum(parsed.seasonFit, allowedSeasons, 'spring_autumn'),
-    fitType,
-    garmentLength: sanitizeEnum(parsed.garmentLength, allowedGarmentLengths, inferredMeta.garmentLength),
-    sleeveLength: sanitizeEnum(parsed.sleeveLength, allowedSleeveLengths, inferredMeta.sleeveLength),
-    silhouette: sanitizeEnum(parsed.silhouette, allowedSilhouettes, inferredMeta.silhouette),
-    name: normalizedName,
-    note: normalizedNote,
-    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
+export async function classifyGarmentImages(dataUrls) {
+  const config = await resolveVisionConfig()
+  if (!config || !Array.isArray(dataUrls) || dataUrls.length === 0) return []
+  if (dataUrls.length === 1) return [await classifyGarmentImage(dataUrls[0])]
+
+  const validDataUrls = dataUrls.filter((dataUrl) => typeof dataUrl === 'string' && dataUrl.startsWith('data:image/'))
+  if (validDataUrls.length !== dataUrls.length) {
+    return Promise.all(dataUrls.map((dataUrl) => classifyGarmentImage(dataUrl).catch(() => null)))
+  }
+
+  const imagePayloads = config.isDashScope
+    ? await Promise.all(validDataUrls.map((dataUrl) => normalizeImageDataUrl(dataUrl)))
+    : validDataUrls
+
+  const prompt =
+    '你在为一个中文衣橱应用按顺序识别多张单件服装图片。只返回 JSON 数组，不要返回代码块、解释或额外文字。' +
+    '数组中的每一项必须包含这些键：index, category, colorGroup, thickness, style, seasonFit, fitType, garmentLength, sleeveLength, silhouette, name, note, confidence。' +
+    'index 必须对应图片顺序，从 0 开始。' +
+    '允许的 category：top, bottom, outerwear, shoes, dress, accessory。' +
+    '允许的 colorGroup：black_white_gray, blue, khaki_brown, denim, accent。' +
+    '允许的 thickness：light, regular, warm。' +
+    '允许的 style：commute, casual, refined。' +
+    '允许的 seasonFit：summer, spring_autumn, winter, all_season。' +
+    '允许的 fitType：slim, regular, relaxed。' +
+    '允许的 garmentLength：short, regular, long, midi, maxi。' +
+    '允许的 sleeveLength：sleeveless, short, three_quarter, long, na。' +
+    '允许的 silhouette：fitted, straight, relaxed, a_line。' +
+    '只有连体裙装才使用 category=dress；半裙和裤子必须使用 category=bottom。' +
+    '鞋子和配饰的 sleeveLength 必须是 na。' +
+    'name 和 note 必须使用简体中文，不能使用英文、拼音或中英混写。' +
+    '如果某张图不是单件清晰服装，confidence 必须低于 0.55，并在 note 里用中文简要说明原因。'
+
+  const requestBody = config.isDashScope
+    ? {
+        model: config.model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              ...imagePayloads.map((imagePayload) => ({ type: 'image_url', image_url: { url: imagePayload } })),
+            ],
+          },
+        ],
+        max_tokens: Math.max(700, imagePayloads.length * 220),
+      }
+    : {
+        model: config.model,
+        input: [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: prompt },
+              ...imagePayloads.map((imagePayload) => ({ type: 'input_image', image_url: imagePayload, detail: 'high' })),
+            ],
+          },
+        ],
+        max_output_tokens: Math.max(700, imagePayloads.length * 220),
+      }
+
+  const endpoint = `${config.baseUrl.replace(/\/$/, '')}/${config.isDashScope ? 'chat/completions' : 'responses'}`
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '')
+      throw new Error(`Vision provider failed: ${response.status} ${errorText}`.trim())
+    }
+
+    const payload = await response.json()
+    const outputText = config.isDashScope
+      ? payload.choices?.[0]?.message?.content ?? ''
+      : payload.output_text ||
+        payload.output?.flatMap((entry) => entry.content ?? []).map((entry) => entry.text ?? '').join('\n') ||
+        ''
+    const jsonText = extractJsonBlock(outputText)
+    if (!jsonText) {
+      throw new Error('Batch vision output missing JSON.')
+    }
+
+    const parsed = JSON.parse(jsonText)
+    if (!Array.isArray(parsed)) {
+      throw new Error('Batch vision output is not an array.')
+    }
+
+    const byIndex = new Map(
+      parsed
+        .map((entry) => [Number(entry?.index), normalizeGarmentDraft(entry, config.provider)])
+        .filter(([index, draft]) => Number.isInteger(index) && index >= 0 && index < dataUrls.length && draft),
+    )
+
+    return dataUrls.map((_, index) => byIndex.get(index) ?? null)
+  } catch {
+    return Promise.all(dataUrls.map((dataUrl) => classifyGarmentImage(dataUrl).catch(() => null)))
   }
 }
 
